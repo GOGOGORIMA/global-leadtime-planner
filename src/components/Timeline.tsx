@@ -10,6 +10,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
+import { getHolidayCorrection } from '../data/holidayCorrections'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import type { PlannerAction } from '../state/plannerReducer'
 import { CALENDAR_DAYS, type OverrideMap } from '../types'
 import { getDayInfo, type DayInfo, type ResolvedCountry } from '../utils/calendars'
@@ -30,17 +32,17 @@ import {
   type WorkCalendar,
 } from '../utils/dateCalc'
 import { WEEKDAYS_EN, WEEKDAYS_JA, formatEnglishDate, formatJaDate, formatJaMonth } from '../utils/dateFormat'
-import { getHolidayCorrection } from '../data/holidayCorrections'
-import { useMediaQuery } from '../hooks/useMediaQuery'
-import { CustomHolidayManager } from './CustomHolidayManager'
-import { DAY_STATUS_STYLES, stepColor } from './styles'
 import { btn, cx } from './classes'
 import { CountryFlag } from './CountryFlag'
+import { CustomHolidayManager } from './CustomHolidayManager'
+import { DAY_STATUS_STYLES, stepColor } from './styles'
 import { Card } from './ui'
 
-const CELL_W = 26
-const LABEL_W = 188
-const LABEL_W_COMPACT = 96
+/** One day = one 28px column (`w-7`). Cells are 26px wide with a 1px margin on each side. */
+const CELL_W = 28
+/** Sticky label column (`w-[210px]`); narrower on phones. */
+const LABEL_W = 210
+const LABEL_W_COMPACT = 112
 const MAX_DAYS = 550
 
 interface TimelineProps {
@@ -86,7 +88,7 @@ interface GridProps {
   markers: Marker[]
   baseWeekend: readonly number[]
   todayIndex: number
-  /** Narrow screens: flag + code labels in a slimmer sticky column. */
+  /** Phones: slimmer sticky label column. */
   compact: boolean
   /** Roving tabindex: the only day cell reachable with Tab (arrow keys move it). */
   activeRow: number
@@ -98,7 +100,10 @@ function actionHint(info: DayInfo): string {
   return isWorkingStatus(info.baseStatus) ? 'クリックでカスタム休日に' : 'クリックで臨時稼働日に'
 }
 
-/** Static grid: memoised so hover state changes in the parent never re-render thousands of cells. */
+/** Sticky label cell shared by every row of the matrix. */
+const LABEL_CELL = 'sticky left-0 z-10 flex h-full shrink-0 items-center gap-2 border-r border-slate-200 bg-white px-2'
+
+/** Static grid: memoised so hover state changes in the parent never re-render hundreds of cells. */
 const TimelineGrid = memo(function TimelineGrid({
   days,
   months,
@@ -113,48 +118,51 @@ const TimelineGrid = memo(function TimelineGrid({
 }: GridProps) {
   const labelW = compact ? LABEL_W_COMPACT : LABEL_W
   const width = labelW + days.length * CELL_W
+  const labelStyle = { width: labelW, minWidth: labelW }
+  const center = (index: number) => labelW + index * CELL_W + CELL_W / 2
+
   return (
     <div className="relative select-none" style={{ width }}>
-      {/* Column highlight for today */}
+      {/* Today column */}
       {todayIndex >= 0 && (
         <div
-          className="pointer-events-none absolute top-0 bottom-0 z-0 bg-sky-400/15"
+          className="pointer-events-none absolute top-5 bottom-0 z-0 bg-sky-400/15"
           style={{ left: labelW + todayIndex * CELL_W, width: CELL_W }}
         />
       )}
-      {/* Marker lines */}
+      {/* Marker lines (solid, through every row) */}
       {markers.map((m) => (
         <div
           key={`${m.label}-${m.index}`}
           className={cx('pointer-events-none absolute top-5 bottom-0 z-[5] w-0.5 -translate-x-1/2', m.lineClassName)}
-          style={{ left: labelW + m.index * CELL_W + CELL_W / 2 }}
+          style={{ left: center(m.index) }}
         />
       ))}
 
-      {/* Marker labels (own row so they never cover the month names) */}
-      <div className="relative h-5">
-        <div className="sticky left-0 z-20 h-full bg-white" style={{ width: labelW }} />
+      {/* Header row 1a: badges (今日 / 発注期限 …) above their day column */}
+      <div className="relative flex h-5">
+        <div className={LABEL_CELL} style={labelStyle} />
         {markers.map((m) => (
           <span
             key={`${m.label}-${m.index}`}
             className={cx(
-              'absolute top-0.5 z-30 -translate-x-1/2 rounded px-1 py-px text-[10px] font-semibold whitespace-nowrap shadow-sm',
+              'absolute top-0.5 z-30 -translate-x-1/2 rounded px-1.5 py-px text-[10px] font-semibold whitespace-nowrap shadow-sm',
               m.className,
             )}
-            style={{ left: labelW + m.index * CELL_W + CELL_W / 2 }}
+            style={{ left: center(m.index) }}
           >
             {m.label}
           </span>
         ))}
       </div>
 
-      {/* Month header */}
-      <div className="relative flex h-5 border-b border-slate-100">
-        <div className="sticky left-0 z-20 shrink-0 bg-white" style={{ width: labelW }} />
+      {/* Header row 1b: year / month where the month changes */}
+      <div className="relative flex h-5">
+        <div className={LABEL_CELL} style={labelStyle} />
         {months.map((m) => (
           <div
             key={m.key}
-            className="truncate border-l border-slate-200 px-1.5 text-[11px] font-semibold text-slate-600"
+            className="shrink-0 truncate border-l border-slate-200 px-1.5 text-[11px] leading-5 font-semibold text-slate-600"
             style={{ width: m.count * CELL_W }}
           >
             {m.label}
@@ -162,12 +170,9 @@ const TimelineGrid = memo(function TimelineGrid({
         ))}
       </div>
 
-      {/* Day header */}
-      <div className="relative flex h-6 border-b border-slate-200">
-        <div
-          className="sticky left-0 z-20 flex shrink-0 items-end bg-white pb-0.5 text-[10px] font-medium text-slate-400"
-          style={{ width: labelW }}
-        >
+      {/* Header row 2: weekday + day of month in every 28px column */}
+      <div className="relative flex h-8 border-b border-slate-200">
+        <div className={cx(LABEL_CELL, 'items-end pb-1 text-[10px] font-medium text-slate-400')} style={labelStyle}>
           日付
         </div>
         {days.map((date, i) => {
@@ -176,11 +181,10 @@ const TimelineGrid = memo(function TimelineGrid({
             <div
               key={date}
               className={cx(
-                'flex shrink-0 flex-col items-center justify-end text-[10px] leading-[1.05] tabular-nums',
+                'flex w-7 min-w-[28px] shrink-0 flex-col items-center justify-center text-[10px] leading-tight tabular-nums',
                 isWeekend ? 'text-slate-400' : 'text-slate-600',
                 i === todayIndex && 'font-bold text-sky-700',
               )}
-              style={{ width: CELL_W }}
             >
               <span className="text-[9px]">{WEEKDAYS_JA[dayOfWeek(date)]}</span>
               <span className="font-semibold">{Number(date.slice(8))}</span>
@@ -189,20 +193,19 @@ const TimelineGrid = memo(function TimelineGrid({
         })}
       </div>
 
-      {/* Country calendars */}
-      <div className="sticky left-0 z-10 w-fit bg-white px-1 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-slate-500">
-        {compact ? '稼働カレンダー' : '各国の稼働カレンダー'}
+      {/* Section A: working calendar of every country */}
+      <div className="flex h-7">
+        <div className={cx(LABEL_CELL, 'text-[11px] font-semibold text-slate-500')} style={labelStyle}>
+          各国の稼働カレンダー
+        </div>
       </div>
       {countryRows.map((row, r) => (
-        <div key={row.country.code} className="relative flex h-7 items-center">
-          <div
-            className="sticky left-0 z-10 flex h-full shrink-0 items-center gap-1.5 border-r border-slate-100 bg-white pr-2"
-            style={{ width: labelW }}
-          >
-            <CountryFlag code={row.country.code} size="sm" />
+        <div key={row.country.code} className="relative flex h-8 items-center">
+          <div className={LABEL_CELL} style={labelStyle}>
+            <CountryFlag code={row.country.code} />
             <span className="truncate text-xs font-medium text-slate-700">{row.country.info.nameJa}</span>
             {row.country.isBase && !compact && (
-              <span className="rounded bg-indigo-50 px-1 text-[9px] font-semibold text-indigo-600">基準</span>
+              <span className="shrink-0 rounded bg-indigo-50 px-1 text-[9px] font-semibold text-indigo-600">基準</span>
             )}
           </div>
           {row.cells.map((cell, c) => (
@@ -214,58 +217,59 @@ const TimelineGrid = memo(function TimelineGrid({
               tabIndex={r === activeRow && c === activeCol ? 0 : -1}
               aria-label={`${row.country.info.nameJa} ${formatJaDate(cell.date)} ${DAY_STATUS_STYLES[cell.status].label}`}
               className={cx(
-                'relative z-[1] m-px h-6 shrink-0 rounded-[3px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-600',
+                'relative z-[1] m-px h-7 w-[26px] min-w-[26px] shrink-0 rounded-[4px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-600',
                 DAY_STATUS_STYLES[cell.status].cell,
               )}
-              style={{ width: CELL_W - 2 }}
             >
+              {cell.status === 'holiday' && <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-white/90" />}
               {cell.status === 'custom-work' && (
                 <span className="absolute top-1/2 left-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
               )}
               {cell.status === 'working' && cell.holidays.length > 0 && (
-                <span className="absolute top-0.5 right-0.5 h-1 w-1 rounded-full bg-emerald-700/60" />
+                <span className="absolute top-1 right-1 h-1 w-1 rounded-full bg-emerald-900/50" />
               )}
             </button>
           ))}
         </div>
       ))}
 
-      {/* Steps */}
-      <div className="sticky left-0 z-10 w-fit bg-white px-1 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-slate-500">
-        {compact ? '工程' : '工程（ストライプ＝休業日でスキップ）'}
+      {/* Section B: Gantt rows on the same date axis */}
+      <div className="mt-1 flex h-7 border-t border-slate-200">
+        <div className={cx(LABEL_CELL, 'text-[11px] font-semibold text-slate-500')} style={labelStyle}>
+          <span className="truncate">
+            工程
+            {!compact && <span className="text-[10px] font-normal">（ストライプ＝休業日でスキップ）</span>}
+          </span>
+        </div>
       </div>
       {stepRows.map((row) => {
         const color = stepColor(row.index)
-        const left = row.startIndex * CELL_W
-        const barWidth = (row.endIndex - row.startIndex + 1) * CELL_W
+        const barLeft = row.startIndex * CELL_W + 1
+        const barWidth = (row.endIndex - row.startIndex + 1) * CELL_W - 2
         return (
           <div key={row.id} className="relative flex h-8 items-center">
-            <div
-              className="sticky left-0 z-10 flex h-full shrink-0 items-center gap-1.5 border-r border-slate-100 bg-white pr-2"
-              style={{ width: labelW }}
-              title={row.name}
-            >
+            <div className={LABEL_CELL} style={labelStyle} title={row.name}>
               <span className={cx('h-2.5 w-2.5 shrink-0 rounded-full', color.dot)} />
               <span className="truncate text-xs font-medium text-slate-700">
                 {row.index + 1}. {row.name}
               </span>
             </div>
-            <div className="relative h-full" style={{ width: days.length * CELL_W }}>
+            <div className="relative h-full shrink-0" style={{ width: days.length * CELL_W }}>
               <div
-                className={cx('absolute top-1 bottom-1 overflow-hidden rounded-md shadow-sm', color.solid)}
-                style={{ left: left + 1, width: barWidth - 2 }}
-                title={`${row.name}: ${row.days}日（${row.calendarLabel}）`}
+                className={cx('absolute top-1 h-6 overflow-hidden rounded', color.solid)}
+                style={{ left: barLeft, width: barWidth }}
+                title={`${row.name}: ${row.days}日 (${row.calendarLabel})`}
               >
                 {row.skipped.map((i) => (
                   <span
                     key={i}
-                    className={cx('stripes absolute inset-y-0', color.soft)}
-                    style={{ left: (i - row.startIndex) * CELL_W, width: CELL_W }}
+                    className={cx('gantt-skip absolute inset-y-0', color.soft)}
+                    style={{ left: (i - row.startIndex) * CELL_W - 1, width: CELL_W }}
                   />
                 ))}
                 <span className="relative z-[1] flex h-full items-center px-1">
-                  <span className="truncate rounded bg-slate-900/30 px-1.5 py-px text-[11px] font-semibold text-white">
-                    {row.name} · {row.days}日（{row.calendarLabel}）
+                  <span className="truncate rounded bg-slate-900/25 px-1.5 py-px text-[11px] font-semibold text-white">
+                    {row.name} · {row.days}日 ({row.calendarLabel})
                   </span>
                 </span>
               </div>
@@ -273,23 +277,21 @@ const TimelineGrid = memo(function TimelineGrid({
           </div>
         )
       })}
-      {stepRows.length === 0 && <div className="sticky left-0 w-fit px-2 py-2 text-xs text-slate-400">工程がありません</div>}
-      <div className="h-2" />
+      {stepRows.length === 0 && (
+        <div className="flex h-8">
+          <div className={cx(LABEL_CELL, 'text-xs text-slate-400')} style={labelStyle}>
+            工程がありません
+          </div>
+        </div>
+      )}
+      <div className="flex h-2">
+        <div className={LABEL_CELL} style={labelStyle} />
+      </div>
     </div>
   )
 })
 
-function Tooltip({
-  info,
-  country,
-  x,
-  y,
-}: {
-  info: DayInfo
-  country: ResolvedCountry
-  x: number
-  y: number
-}) {
+function Tooltip({ info, country, x, y }: { info: DayInfo; country: ResolvedCountry; x: number; y: number }) {
   const blocking = info.holidays.filter((h) => h.blocking)
   const informational = info.holidays.filter((h) => !h.blocking)
   const correctionNote = getHolidayCorrection(country.code)?.note
@@ -298,11 +300,11 @@ function Tooltip({
   return (
     <div
       role="tooltip"
-      className="pointer-events-none fixed z-50 w-72 rounded-xl border border-slate-200 bg-white p-3 text-xs shadow-xl"
+      className="pointer-events-none fixed z-30 w-72 rounded-lg border border-slate-200 bg-white p-3 text-xs shadow-lg"
       style={{ left: Math.max(8, Math.min(x - 144, viewport - 296)), top: y + 10 }}
     >
       <div className="flex items-center gap-1.5 text-slate-500">
-        <CountryFlag code={country.code} size="sm" />
+        <CountryFlag code={country.code} />
         <span className="font-medium text-slate-700">{country.info.nameJa}</span>
         <span className="ml-auto tabular-nums">
           {formatJaDate(info.date)} · {WEEKDAYS_EN[dayOfWeek(info.date)]}
@@ -423,13 +425,13 @@ export function Timeline({
       if (index >= 0 && index < days.length) list.push({ index, label, className, lineClassName })
     }
     if (mode === 'backward') {
-      push(anchor, '希望納期', 'bg-emerald-600 text-white', 'bg-emerald-600/70')
-      if (hasSteps) push(orderDeadline, '発注期限', 'bg-indigo-600 text-white', 'bg-indigo-600/70')
+      push(anchor, '希望納期', 'bg-emerald-600 text-white', 'bg-emerald-600')
+      if (hasSteps) push(orderDeadline, '発注期限', 'bg-indigo-600 text-white', 'bg-indigo-600')
     } else {
-      push(anchor, '開始日', 'bg-indigo-600 text-white', 'bg-indigo-600/70')
-      if (hasSteps && schedule.ok) push(schedule.end, '納期', 'bg-emerald-600 text-white', 'bg-emerald-600/70')
+      push(anchor, '開始日', 'bg-indigo-600 text-white', 'bg-indigo-600')
+      if (hasSteps && schedule.ok) push(schedule.end, '納期', 'bg-emerald-600 text-white', 'bg-emerald-600')
     }
-    push(today, '今日', 'bg-sky-500 text-white', 'bg-sky-400/0')
+    push(today, '今日', 'bg-sky-500 text-white', 'bg-transparent')
     return list
   }, [mode, anchor, orderDeadline, hasSteps, schedule, today, rangeStart, days.length])
 
@@ -520,7 +522,7 @@ export function Timeline({
         工程（稼働）
       </span>
       <span className="flex items-center gap-1">
-        <span className="stripes h-3 w-5 rounded-[3px] bg-indigo-300" />
+        <span className="gantt-skip h-3 w-5 rounded-[3px] bg-indigo-300" />
         工程（スキップ）
       </span>
     </div>
@@ -529,10 +531,10 @@ export function Timeline({
   return (
     <Card
       icon={<CalendarRange size={18} />}
-      title="ガントチャート・稼働カレンダー"
+      title="各国の稼働カレンダー＆工程ガントチャート"
       subtitle={
         <>
-          各国の稼働日（緑）・週末（グレー）・祝日（赤）と工程期間を縦に比較。祝日にカーソルを合わせると英語／現地語の名称を表示します。
+          各国の稼働日（緑）・週末（グレー）・祝日（赤）と工程期間を同じ日付軸で比較。祝日にカーソルを合わせると英語／現地語の名称を表示します。
           <strong className="font-semibold text-slate-700">
             国の行の日付をクリックすると、カスタム休日（旧正月・工場休暇など）を追加／解除できます。
           </strong>
@@ -573,7 +575,7 @@ export function Timeline({
       </div>
       <div
         ref={gridRef}
-        className="overflow-x-auto rounded-xl border border-slate-200 bg-white pb-1"
+        className="overflow-x-auto rounded-lg border border-slate-200 bg-white"
         onClick={onClick}
         onKeyDown={onKeyDown}
         onMouseOver={(e) => showTooltipFor(e.target)}
@@ -595,11 +597,14 @@ export function Timeline({
           activeCol={activeCol}
         />
       </div>
-      {hover && hoveredRow && hoveredInfo && (
-        <Tooltip info={hoveredInfo} country={hoveredRow.country} x={hover.x} y={hover.y} />
-      )}
+      {hover && hoveredRow && hoveredInfo && <Tooltip info={hoveredInfo} country={hoveredRow.country} x={hover.x} y={hover.y} />}
 
-      <CustomHolidayManager countries={countries} overrides={overrides} dispatch={dispatch} defaultDate={hasSteps && schedule.ok ? schedule.start : anchor} />
+      <CustomHolidayManager
+        countries={countries}
+        overrides={overrides}
+        dispatch={dispatch}
+        defaultDate={hasSteps && schedule.ok ? schedule.start : anchor}
+      />
     </Card>
   )
 }

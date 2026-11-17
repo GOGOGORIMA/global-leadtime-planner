@@ -245,7 +245,7 @@ export function CountryPanel({ countries, dispatch, onOpenSettings, now }: Count
               比較対象国がありません。下のプリセットか検索から追加してください。
             </p>
           ) : (
-            <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
               {partners.map((country) => (
                 <CountryChip
                   key={country.code}

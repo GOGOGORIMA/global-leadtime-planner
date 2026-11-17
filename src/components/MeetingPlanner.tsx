@@ -26,13 +26,19 @@ import {
   intersectIntervals,
   mergeIntervals,
   totalMinutes,
-  type Interval,
 } from '../utils/timezone'
 import { btn, cx, inputClass } from './classes'
 import { CountryFlag } from './CountryFlag'
 import { Badge, Card, type Tone } from './ui'
 
 const HOUR_MS = 3_600_000
+
+/**
+ * Row layout: 220px label column + 24-hour bar. Below `sm` (phones) the label stacks above the bar.
+ * The hour scale, every country row, the "everyone" row and the now-line overlay share this grid,
+ * so all bars line up exactly.
+ */
+const ROW_GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-[220px_1fr]'
 
 interface MeetingPlannerProps {
   countries: readonly ResolvedCountry[]
@@ -42,17 +48,22 @@ interface MeetingPlannerProps {
   onDateChange: (date: ISODate) => void
 }
 
+/** `8時間`, `5.5時間` (half hours stay short enough for the 220px label column), `45分`, `5時間15分`. */
 function formatDuration(minutes: number): string {
-  const h = Math.floor(minutes / 60)
-  const m = Math.round(minutes % 60)
+  const rounded = Math.round(minutes)
+  if (rounded % 30 === 0 && rounded >= 60) return `${rounded / 60}時間`
+  const h = Math.floor(rounded / 60)
+  const m = rounded % 60
   if (h === 0) return `${m}分`
   return m ? `${h}時間${m}分` : `${h}時間`
 }
 
+const BAR = 'absolute top-1.5 flex h-6 items-center justify-center overflow-hidden rounded border'
+
 const NON_WORKING_STYLE: Record<Exclude<DayStatus, 'working' | 'custom-work'>, { bar: string; label: string }> = {
-  holiday: { bar: 'bg-rose-200 stripes-dark text-rose-800', label: '祝日' },
-  weekend: { bar: 'bg-slate-300 stripes-dark text-slate-600', label: '週末' },
-  'custom-off': { bar: 'bg-orange-200 stripes-dark text-orange-800', label: '休業' },
+  holiday: { bar: 'stripes-dark border-rose-300 bg-rose-200 text-rose-800', label: '祝日' },
+  weekend: { bar: 'stripes-dark border-slate-300 bg-slate-200 text-slate-600', label: '週末' },
+  'custom-off': { bar: 'stripes-dark border-amber-300 bg-amber-200 text-amber-900', label: '休業' },
 }
 
 function nowStatus(country: ResolvedCountry, calendar: WorkCalendar, now: number): { tone: Tone; label: string; title?: string } {
@@ -64,7 +75,7 @@ function nowStatus(country: ResolvedCountry, calendar: WorkCalendar, now: number
     return { tone: 'rose', label: '祝日', title: names.join(' / ') }
   }
   if (status === 'weekend') return { tone: 'slate', label: '週末' }
-  if (status === 'custom-off') return { tone: 'orange', label: '休業日' }
+  if (status === 'custom-off') return { tone: 'amber', label: '休業日' }
   if (local.minutes >= country.workStart && local.minutes < country.workEnd) return { tone: 'emerald', label: '営業中' }
   return { tone: 'slate', label: '時間外' }
 }
@@ -77,9 +88,9 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
   const span = dayWindow.end - dayWindow.start
   const pct = (instant: number) => ((instant - dayWindow.start) / span) * 100
 
-  const rows = useMemo(() => {
+  const { rows, baseBand } = useMemo(() => {
     const baseWorking = getWorkingIntervals(dayWindow, toParticipant(base, calendars.get(base.code) ?? ALL_DAYS_CALENDAR))
-    return countries.map((country) => {
+    const list = countries.map((country) => {
       const calendar = calendars.get(country.code) ?? ALL_DAYS_CALENDAR
       const participant = toParticipant(country, calendar)
       const slots = getBusinessSlots(dayWindow, participant).map((slot) => {
@@ -92,14 +103,16 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
       })
       const working = mergeIntervals(slots.filter((s) => s.working))
       const overlap = country.isBase ? working : intersectIntervals(baseWorking, working)
-      return { country, participant, slots, overlap, overlapMinutes: totalMinutes(overlap) }
+      return { country, participant, slots, overlapMinutes: totalMinutes(overlap) }
     })
+    return { rows: list, baseBand: baseWorking }
   }, [countries, calendars, dayWindow, base])
 
   const common = useMemo(() => findCommonIntervals(dayWindow, rows.map((r) => r.participant)), [rows, dayWindow])
 
   const hours = Math.round(span / HOUR_MS)
   const ticks = Array.from({ length: hours + 1 }, (_, h) => dayWindow.start + h * HOUR_MS)
+  const gridTicks = ticks.filter((_, h) => h % 3 === 0 && h > 0 && h < hours)
   const showNow = now >= dayWindow.start && now < dayWindow.end
 
   // Hover crosshair
@@ -124,6 +137,22 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
   }
 
   const baseAbbr = getTimeZoneAbbreviation(base.timeZone, dayWindow.start + 12 * HOUR_MS)
+
+  /** Background shared by every bar: 3-hour grid lines + the base country's business hours. */
+  const barBackground = (
+    <>
+      {gridTicks.map((t) => (
+        <span key={t} className="absolute inset-y-0 w-px bg-slate-300/70" style={{ left: `${pct(t)}%` }} />
+      ))}
+      {baseBand.map((b) => (
+        <span
+          key={`band-${b.start}`}
+          className="absolute inset-y-0 border-x border-dashed border-emerald-500/70 bg-emerald-100/70"
+          style={{ left: `${pct(b.start)}%`, width: `${pct(b.end) - pct(b.start)}%` }}
+        />
+      ))}
+    </>
+  )
 
   const dateControls = (
     <div className="flex items-center gap-1">
@@ -153,18 +182,13 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
       subtitle={`${base.info.nameJa}時間（${baseAbbr}）の24時間軸で、各国の営業時間・休日を比較。バーにカーソルを合わせると各国の現地時刻を表示します。`}
       actions={dateControls}
     >
-      <div
-        ref={containerRef}
-        className="relative"
-        onMouseMove={onMouseMove}
-        onMouseLeave={() => setHover(null)}
-      >
-        {/* Hour scale */}
-        <div className="grid grid-cols-1 gap-x-4 md:grid-cols-[18rem_minmax(0,1fr)]">
-          <div className="hidden text-xs font-medium text-slate-500 md:block">
+      <div ref={containerRef} className="relative" onMouseMove={onMouseMove} onMouseLeave={() => setHover(null)}>
+        {/* Hour scale (base country time, 00–24, every 3 hours) */}
+        <div className={ROW_GRID}>
+          <div className="hidden truncate text-xs font-medium text-slate-500 sm:block">
             {formatJaDate(date)} の {base.info.nameJa}時間
           </div>
-          <div ref={barRef} className="relative h-5">
+          <div ref={barRef} className="relative h-5 min-w-0">
             {ticks.map((t, h) => (
               <span
                 key={t}
@@ -183,137 +207,148 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
           </div>
         </div>
 
-        <ul className="divide-y divide-slate-100">
-          {rows.map(({ country, slots, overlap, overlapMinutes }) => {
-            const status = nowStatus(country, calendarOf(country.code), now)
-            const offset = formatUtcOffset(getTimeZoneOffset(now, country.timeZone))
-            return (
-              <li key={country.code} className="grid grid-cols-1 items-center gap-x-4 gap-y-1 py-2 md:grid-cols-[18rem_minmax(0,1fr)]">
-                <div className="flex min-w-0 items-center gap-2">
-                  <CountryFlag code={country.code} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-sm font-medium text-slate-800">{country.info.nameJa}</span>
+        <div className="relative">
+          <ul>
+            {rows.map(({ country, slots, overlapMinutes }) => {
+              const status = nowStatus(country, calendarOf(country.code), now)
+              const offset = formatUtcOffset(getTimeZoneOffset(now, country.timeZone))
+              const hoursLabel = `${formatClock(country.workStart)}-${formatClock(country.workEnd)}`
+              return (
+                <li key={country.code} className={cx(ROW_GRID, 'items-center gap-y-1 border-b border-slate-100 py-2.5')}>
+                  {/* Label column (220px) */}
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <CountryFlag code={country.code} />
+                      <span className="truncate text-sm font-semibold text-slate-800">{country.info.nameJa}</span>
                       {country.isBase && <Badge tone="indigo">基準</Badge>}
                       <Badge tone={status.tone}>
                         <span title={status.title}>{status.label}</span>
                       </Badge>
                     </div>
-                    <div className="truncate text-xs text-slate-500 tabular-nums">
+                    <div className="mt-0.5 truncate text-xs text-slate-500 tabular-nums">
                       <span className="font-semibold text-slate-700">{formatInstantClock(now, country.timeZone)}</span>{' '}
                       ({weekdayJa(getZonedDateTime(now, country.timeZone).date)}) · {offset}
                       {!country.isBase && (
-                        <span className={overlapMinutes > 0 ? 'text-emerald-700' : 'text-slate-400'}>
-                          {' '}
-                          · 重なり {overlapMinutes > 0 ? formatDuration(overlapMinutes) : 'なし'}
-                        </span>
+                        <>
+                          {' · '}
+                          <span className={overlapMinutes > 0 ? 'font-medium text-emerald-600' : 'text-slate-400'}>
+                            重なり {overlapMinutes > 0 ? formatDuration(overlapMinutes) : 'なし'}
+                          </span>
+                        </>
                       )}
                     </div>
                   </div>
-                </div>
-                <div>
-                  <div className="relative h-7 overflow-hidden rounded-md bg-slate-100">
-                    {ticks.slice(1, -1).map((t) => (
-                      <span key={t} className="absolute inset-y-0 w-px bg-white/70" style={{ left: `${pct(t)}%` }} />
-                    ))}
-                    {slots.map((slot) => {
-                      const left = pct(slot.start)
-                      const width = pct(slot.end) - left
-                      const hoursLabel = `${formatClock(country.workStart)}–${formatClock(country.workEnd)}`
-                      const label = `${formatInstantClock(slot.start, country.timeZone)}–${formatInstantClock(slot.end, country.timeZone)}`
-                      if (slot.working) {
+
+                  {/* 24-hour bar */}
+                  <div className="min-w-0">
+                    <div className="relative h-9 overflow-visible rounded-md bg-slate-100">
+                      {barBackground}
+                      {slots.map((slot) => {
+                        const left = pct(slot.start)
+                        const width = pct(slot.end) - left
+                        const shown = `${formatInstantClock(slot.start, country.timeZone)}-${formatInstantClock(slot.end, country.timeZone)}`
+                        if (slot.working) {
+                          return (
+                            <div
+                              key={slot.start}
+                              className={cx(BAR, 'border-emerald-600 bg-emerald-400/80 text-xs font-medium text-emerald-950')}
+                              style={{ left: `${left}%`, width: `${width}%` }}
+                              title={`${country.info.nameJa} 営業時間 ${hoursLabel}（この日に表示中: 現地 ${formatJaDate(slot.localDate, { year: false })} ${shown}）`}
+                            >
+                              {width > 14 && <span className="truncate px-1">{hoursLabel}</span>}
+                            </div>
+                          )
+                        }
+                        const style =
+                          NON_WORKING_STYLE[slot.status as keyof typeof NON_WORKING_STYLE] ?? NON_WORKING_STYLE.weekend
                         return (
                           <div
                             key={slot.start}
-                            className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[5px] bg-emerald-300 text-[10px] font-medium text-emerald-900"
+                            className={cx(BAR, 'text-[10px] font-medium', style.bar)}
                             style={{ left: `${left}%`, width: `${width}%` }}
-                            title={`${country.info.nameJa} 営業時間 ${hoursLabel}（この日に表示中: 現地 ${formatJaDate(slot.localDate, { year: false })} ${label}）`}
+                            title={`${country.info.nameJa}: ${style.label}${slot.holidayNames.length ? `（${slot.holidayNames.join(' / ')}）` : ''} 現地 ${formatJaDate(slot.localDate, { year: false })}`}
                           >
-                            {width > 14 && <span className="relative z-10 truncate px-1">{hoursLabel}</span>}
+                            {width > 9 && <span className="truncate px-1">{slot.holidayNames[0] ?? style.label}</span>}
                           </div>
                         )
-                      }
-                      const style = NON_WORKING_STYLE[slot.status as keyof typeof NON_WORKING_STYLE] ?? NON_WORKING_STYLE.weekend
-                      return (
-                        <div
-                          key={slot.start}
-                          className={cx('absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[5px] text-[10px] font-medium', style.bar)}
-                          style={{ left: `${left}%`, width: `${width}%` }}
-                          title={`${country.info.nameJa}: ${style.label}${slot.holidayNames.length ? `（${slot.holidayNames.join(' / ')}）` : ''} 現地 ${formatJaDate(slot.localDate, { year: false })}`}
-                        >
-                          {width > 9 && <span className="truncate px-1">{slot.holidayNames[0] ?? style.label}</span>}
-                        </div>
-                      )
-                    })}
-                    {!country.isBase &&
-                      overlap.map((o: Interval) => (
-                        <div
-                          key={`o${o.start}`}
-                          className="pointer-events-none absolute inset-y-0 rounded-[5px] ring-2 ring-emerald-600 ring-inset"
-                          style={{ left: `${pct(o.start)}%`, width: `${pct(o.end) - pct(o.start)}%` }}
-                        />
-                      ))}
-                    {showNow && <span className="absolute inset-y-0 z-10 w-0.5 bg-rose-500" style={{ left: `${pct(now)}%` }} />}
-                  </div>
-                  {!country.isBase && (
-                    <div className="relative h-3.5 text-[9px] text-slate-400 tabular-nums">
-                      {ticks
-                        .filter((_, h) => h % 6 === 0 && h < hours)
-                        .map((t, i) => (
-                          <span key={t} className={cx('absolute', i > 0 && '-translate-x-1/2')} style={{ left: `${pct(t)}%` }}>
-                            {formatInstantClock(t, country.timeZone)}
-                          </span>
-                        ))}
+                      })}
+                      {showNow && (
+                        <span className="absolute top-0 bottom-0 z-20 w-0.5 bg-rose-500 sm:hidden" style={{ left: `${pct(now)}%` }} />
+                      )}
                     </div>
-                  )}
-                </div>
-              </li>
-            )
-          })}
-
-          <li className="grid grid-cols-1 items-center gap-x-4 gap-y-1 py-2.5 md:grid-cols-[18rem_minmax(0,1fr)]">
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
-                <Users size={15} />
-              </span>
-              <div>
-                <div className="text-sm font-semibold text-slate-800">全員が営業時間内</div>
-                <div className="text-xs text-slate-500">
-                  {common.length > 0 ? `合計 ${formatDuration(totalMinutes(common))}` : '共通の時間帯なし'}
-                </div>
-              </div>
-            </div>
-            <div className="relative h-7 overflow-hidden rounded-md bg-slate-100">
-              {common.map((c) => {
-                const left = pct(c.start)
-                const width = pct(c.end) - left
-                return (
-                  <div
-                    key={c.start}
-                    className="absolute inset-y-0 flex items-center justify-center overflow-hidden rounded-[5px] bg-indigo-500 text-[10px] font-semibold text-white"
-                    style={{ left: `${left}%`, width: `${width}%` }}
-                  >
-                    {width > 12 && (
-                      <span className="truncate px-1">
-                        {formatInstantClock(c.start, base.timeZone)}–{formatInstantClock(c.end, base.timeZone)}
-                      </span>
+                    {!country.isBase && (
+                      <div className="relative mt-0.5 h-3.5 text-[10px] text-slate-400 tabular-nums">
+                        {ticks
+                          .filter((_, h) => h % 6 === 0 && h < hours)
+                          .map((t, i) => (
+                            <span key={t} className={cx('absolute', i > 0 && '-translate-x-1/2')} style={{ left: `${pct(t)}%` }}>
+                              {formatInstantClock(t, country.timeZone)}
+                            </span>
+                          ))}
+                      </div>
                     )}
                   </div>
-                )
-              })}
-              {showNow && <span className="absolute inset-y-0 z-10 w-0.5 bg-rose-500" style={{ left: `${pct(now)}%` }} />}
+                </li>
+              )
+            })}
+
+            <li className={cx(ROW_GRID, 'items-center gap-y-1 py-2.5')}>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
+                  <Users size={15} />
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-slate-800">全員が営業時間内</div>
+                  <div className="text-xs text-slate-500">
+                    {common.length > 0 ? `合計 ${formatDuration(totalMinutes(common))}` : '共通の時間帯なし'}
+                  </div>
+                </div>
+              </div>
+              <div className="relative h-9 min-w-0 overflow-visible rounded-md bg-slate-100">
+                {barBackground}
+                {common.map((c) => {
+                  const left = pct(c.start)
+                  const width = pct(c.end) - left
+                  return (
+                    <div
+                      key={c.start}
+                      className={cx(BAR, 'border-indigo-700 bg-indigo-500 text-xs font-semibold text-white')}
+                      style={{ left: `${left}%`, width: `${width}%` }}
+                    >
+                      {width > 12 && (
+                        <span className="truncate px-1">
+                          {formatInstantClock(c.start, base.timeZone)}-{formatInstantClock(c.end, base.timeZone)}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+                {showNow && (
+                  <span className="absolute top-0 bottom-0 z-20 w-0.5 bg-rose-500 sm:hidden" style={{ left: `${pct(now)}%` }} />
+                )}
+              </div>
+            </li>
+          </ul>
+
+          {/* Current time: one red line through every row (desktop / tablet) */}
+          {showNow && (
+            <div className={cx(ROW_GRID, 'pointer-events-none absolute inset-0 max-sm:hidden')} aria-hidden>
+              <div />
+              <div className="relative">
+                <span
+                  className="absolute top-0 bottom-0 z-20 w-0.5 -translate-x-1/2 bg-rose-500"
+                  style={{ left: `${pct(now)}%` }}
+                />
+              </div>
             </div>
-          </li>
-        </ul>
+          )}
+        </div>
 
         {hover && (
           <>
-            <span
-              className="pointer-events-none absolute top-5 bottom-0 z-20 w-px bg-indigo-600/70"
-              style={{ left: hover.x }}
-            />
+            <span className="pointer-events-none absolute top-5 bottom-0 z-20 w-px bg-indigo-600/70" style={{ left: hover.x }} />
             <div
-              className="pointer-events-none fixed z-50 w-64 rounded-xl border border-slate-200 bg-white/95 p-2.5 text-xs shadow-xl backdrop-blur"
+              className="pointer-events-none fixed z-50 w-64 rounded-lg border border-slate-200 bg-white/95 p-2.5 text-xs shadow-lg backdrop-blur"
               style={{
                 left: Math.min(hover.clientX + 14, (typeof document !== 'undefined' ? document.documentElement.clientWidth : 1200) - 270),
                 top: hover.clientY + 14,
@@ -343,19 +378,19 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
 
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
         <span className="flex items-center gap-1">
-          <span className="h-2.5 w-4 rounded-sm bg-emerald-300" />
+          <span className="h-2.5 w-4 rounded-sm border border-emerald-600 bg-emerald-400/80" />
           営業時間
         </span>
         <span className="flex items-center gap-1">
-          <span className="h-2.5 w-4 rounded-sm ring-2 ring-emerald-600 ring-inset" />
-          基準国と重なる時間
+          <span className="h-2.5 w-4 border-x border-dashed border-emerald-500/70 bg-emerald-100/70" />
+          {base.info.nameJa}の営業時間
         </span>
         <span className="flex items-center gap-1">
           <span className="stripes-dark h-2.5 w-4 rounded-sm bg-rose-200" />
           祝日
         </span>
         <span className="flex items-center gap-1">
-          <span className="stripes-dark h-2.5 w-4 rounded-sm bg-slate-300" />
+          <span className="stripes-dark h-2.5 w-4 rounded-sm bg-slate-200" />
           週末
         </span>
         <span className="flex items-center gap-1">

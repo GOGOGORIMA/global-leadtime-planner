@@ -103,7 +103,7 @@ function StepResultLine({ scheduled, reportStep }: { scheduled?: ScheduledStep; 
         <span className="tabular-nums text-slate-500">休業日スキップ {scheduled.skippedDays.length}日</span>
       )}
       {holidays.map((h) => (
-        <Badge key={h.date} tone={h.kind === 'holiday' ? 'rose' : 'orange'}>
+        <Badge key={h.date} tone={h.kind === 'holiday' ? 'rose' : 'amber'}>
           {formatJaDate(h.date, { year: false, weekday: false })} {h.localNames[0] ?? h.names[0]}
         </Badge>
       ))}
