@@ -1,0 +1,37 @@
+{
+  "name": "global-leadtime-planner",
+  "private": true,
+  "version": "1.0.0",
+  "description": "B2B Global Lead-Time Planner: time-zone & local-holiday aware lead-time calculator and meeting planner for international sales / trade operations.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:tz": "TZ=Pacific/Pago_Pago vitest run && TZ=Pacific/Kiritimati vitest run && TZ=America/Los_Angeles vitest run"
+  },
+  "dependencies": {
+    "date-holidays": "^3.39.2",
+    "lucide-react": "^1.74.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "oxlint": "^1.94.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^4.1.12"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}
