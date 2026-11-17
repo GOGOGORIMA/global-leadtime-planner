@@ -3,6 +3,14 @@ import type { ISODate, OverrideKind, ScheduleMode } from './utils/dateCalc'
 /** Calendar id for steps counted in calendar days (every day is a working day). */
 export const CALENDAR_DAYS = 'calendar'
 
+/** Right-pane tabs (also the `?tab=` URL parameter). */
+export const PLANNER_TABS = ['meeting', 'schedule', 'calendar', 'export'] as const
+export type PlannerTab = (typeof PLANNER_TABS)[number]
+
+export function isPlannerTab(value: unknown): value is PlannerTab {
+  return typeof value === 'string' && (PLANNER_TABS as readonly string[]).includes(value)
+}
+
 export interface Step {
   id: string
   /** Step name — used verbatim in the English e-mail, so English is recommended. */
@@ -42,4 +50,6 @@ export interface PlannerState {
   anchor: ISODate
   steps: Step[]
   overrides: OverrideMap
+  /** Open tab of the right pane. */
+  tab: PlannerTab
 }

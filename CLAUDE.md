@@ -37,28 +37,29 @@ index.html                 lang="ja"。favicon は public/favicon.svg
 vite.config.ts             base: './'（必須。リポジトリ名に依存せずサブパスで動作）・vendor/react チャンク分割
 tsconfig.{app,node,test}.json  app はテスト除外 / test は node 型を含む
 src/
-  main.tsx, App.tsx        ルート。派生データ（国設定→カレンダー→スケジュール→レポート）を useMemo で組み立て
+  main.tsx, App.tsx        ルート。左ペイン（固定）＋右ペイン（4 タブ）のレイアウトと、派生データ
+                           （国設定→カレンダー→スケジュール→レポート）の useMemo による組み立て
   index.css                Tailwind 読み込み・テーマ・独自ユーティリティ
-  types.ts                 PlannerState / Step / CountrySettings / DayOverride / CALENDAR_DAYS
+  types.ts                 PlannerState / Step / CountrySettings / DayOverride / CALENDAR_DAYS / PLANNER_TABS
   data/countries.ts        国カタログ（名称 EN/JA・既定 TZ・既定週末・地域）とプリセット
-  data/flags.ts            国旗 SVG（flag-icons）の URL 解決（import.meta.glob。各 SVG は個別アセット）
+  data/flags.ts            国旗画像の URL 解決：flagcdn.com（主）／同梱の flag-icons SVG（フォールバック。import.meta.glob で個別アセット）
   data/holidayCorrections.ts  date-holidays と公式祝日一覧の差分補正（現在は AE。出典付き）
   state/defaults.ts        初期状態・工程テンプレート・工程名候補・ID 生成・上限値
   state/plannerReducer.ts  useReducer 用リデューサと sanitizeState（URL 等の外部入力を安全化）
   hooks/usePlanner.ts      状態 ⇄ URL クエリ（replaceState, 250ms debounce）⇄ LocalStorage（前回状態）
-  hooks/useNow.ts, useStoredState.ts, useMediaQuery.ts
+  hooks/useNow.ts, useStoredState.ts
   utils/dateCalc.ts        ★ YYYY-MM-DD 文字列ベースの純粋関数（日付演算・稼働日判定・順算/逆算エンジン）
   utils/dateFormat.ts      英語/日本語の日付表示（純粋関数）
   utils/holidays.ts        date-holidays ラッパー（キャッシュ・複数日祝日の展開・EN/現地名の対応付け）
   utils/timezone.ts        Intl ベースのタイムゾーン変換・営業時間の重なり計算・会議候補探索
   utils/calendars.ts       国設定の解決（ResolvedCountry）と WorkCalendar の構築、オーバーライドの範囲化
   utils/report.ts          スケジュール → 表示/出力用レポート（スキップ祝日・関係国の祝日一覧・発注期限）
-  utils/exportText.ts      英文メール / WhatsApp テキスト生成（純粋関数）
+  utils/exportText.ts      英文テキスト生成：Standard Email / WhatsApp / Meeting Proposal（純粋関数）
   utils/urlState.ts        状態 ⇄ URL クエリ文字列
   utils/storage.ts         LocalStorage（プリセット・前回状態・出力設定）。全アクセス try/catch
   utils/clipboard.ts       クリップボードコピー（非セキュアコンテキスト用フォールバック付き）
   components/              UI（下記）。classes.ts = 共有クラス文字列、styles.ts = 日ステータス/工程の配色、
-                           CountryFlag.tsx = 国旗画像（絵文字は使わない）
+                           CountryFlag.tsx = 国旗画像（絵文字は使わない）、tabIds.ts = タブ／タブパネルの DOM id
 ```
 
 ### UI（`src/components`）
@@ -66,27 +67,46 @@ src/
 | コンポーネント | 役割 |
 | --- | --- |
 | `AppHeader` | 共有 URL コピー、プリセット保存/読込/削除（LocalStorage）、リセット |
+| `TabBar` | 右ペインのタブ切り替え（Lucide アイコン付きピル型。WAI-ARIA tabs、←/→/Home/End で移動） |
 | `CountryPanel` | 基準国 select、比較対象国チップ（国旗＋国名・現地時刻＋TZ 略称・⚙設定・×削除）、プリセット 9 か国トグル、国検索コンボボックス |
 | `CountrySettingsModal` | 国ごとのタイムゾーン・地域（州）・週末（曜日トグル）・営業時間 |
 | `MeetingPlanner` | 基準国時間の 24h 軸に各国営業時間バー（祝日/週末はハッチ）、基準国の営業時間帯（破線の薄緑帯）、全員の重なり、全行を貫く現在時刻線、ホバーで各国現地時刻 |
-| `SchedulePanel` | 順算/逆算切替、基準日、工程（名称・日数・適用カレンダー・並べ替え・削除・テンプレート）、結果サマリー |
+| `SchedulePanel` | 順算/逆算切替、基準日、工程（名称・日数・適用カレンダー・並べ替え・削除・テンプレート）、計算結果サマリーカード（最終納期・発注デッドライン・総所要日数・祝日でスキップした日数と祝日名）、「ガントチャートで確認する →」 |
 | `Timeline` | 各国の稼働カレンダー＆工程ガントチャート：稼働日(緑)/週末(灰)/祝日(赤＋白点)/カスタム休日(アンバー)/臨時稼働(濃緑＋白点)、工程バー（スキップ日は 45° ストライプ）。セルのホバーで祝日名（英語/現地語）、クリックでオーバーライド切替 |
 | `CustomHolidayManager` | 期間指定でカスタム休日/稼働日を追加、登録済み一覧と削除 |
-| `ExportPanel` | 英文メール / WhatsApp の生成・プレビュー・ワンクリックコピー・メール/WhatsApp で開く |
+| `ExportPanel` | 3 形式（Standard Email / WhatsApp / Chat / Meeting Proposal）の切り替え・プレビュー・ワンクリックコピー・メール/WhatsApp で開く |
 
 ## レイアウト仕様（変更時は維持すること）
 
-- **上段**：`grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 items-start`。左 = 対象国と営業時間（340px 固定）、右 = 現在時刻と会議可能時間帯。
-  1024px 以上で必ず横並び（Windows の表示倍率 125–150% でも横並びになるよう `xl` ではなく `lg`）。
-- **会議可能時間帯**の各行：`sm:grid-cols-[220px_1fr]`（左ラベル 220px ＋ 24h バー）。ラベル 1 段目 = 国旗＋国名（太字）＋営業中/時間外バッジ、
-  2 段目 = `23:01 (火) · UTC+9 · 重なり 8時間`（重なりは `text-emerald-600 font-medium`。30 分単位は「5.5時間」）。
+「**左ペイン常時固定 ＋ 右ペイン 4 タブ切り替え**」のデスクトップ向けレイアウト。
+
+- **全体**：ヘッダー（非固定）の下に `<main className="flex flex-row items-start gap-6 max-w-[1600px] mx-auto px-6 py-5">`。
+  **ブレークポイントなしで常に左右 2 ペイン**（縦積みにしない）。ルートは `min-w-[1000px]` で、それより狭いウィンドウは横スクロール。
+- **左ペイン（常時固定）**：`<aside className="w-[330px] min-w-[330px] shrink-0 sticky top-5 max-h-[calc(100vh-2.5rem)] overflow-y-auto">`。
+  対象国と営業時間（基準国 select、比較対象国チップ、プリセット 9 か国、国検索）。国は「国旗画像＋日本語国名」。
+  フッター（データ出典）は右ペインの中に置く（全幅のフッターだとページ末尾で sticky の左ペインが押し上げられて上端が隠れるため）。
+- **右ペイン**：`flex-1 min-w-0`。上部にタブバー（`TabBar`）、その下に**選択中のタブだけ**を描画（`role="tabpanel"`）。
+  タブ状態は `PlannerState.tab` に保持し、URL の `?tab=` と同期する。
+  | `tab` | タブ | 内容 |
+  | --- | --- | --- |
+  | `meeting`（既定） | ① 会議可能時間帯 | `MeetingPlanner`（現在時刻と会議可能時間帯。対象日を選ぶと Meeting Proposal の起点にもなる） |
+  | `schedule` | ② 納期計算 | `SchedulePanel`（左：モード・基準日・工程、右：計算結果サマリー、下部：「ガントチャートで確認する →」でタブ ③ へ） |
+  | `calendar` | ③ 稼働カレンダー＆ガント | `Timeline` ＋ `CustomHolidayManager`（期間でカスタム休日を追加） |
+  | `export` | ④ 英文メール / WhatsApp | `ExportPanel`（Standard Email / WhatsApp / Chat / Meeting Proposal） |
+- 右ペインの幅はウィンドウ幅より約 400px 狭いので、右ペイン内の段組み（納期計算のサマリー、工程行、カスタム休日フォーム、
+  出力の設定＋プレビュー、出力形式タイル）とタブバーの文字サイズは**ビューポートではなくコンテナクエリ**（`@container` / `@xl:` / `@2xl:` / `@3xl:`）
+  で切り替える。タブバーはコンテナ幅 768px 未満（ウィンドウ幅 ≒ 1170px 未満）で 13px・余白小にして、1000px でも 4 タブが収まる。
+- **会議可能時間帯**の各行：`grid grid-cols-[220px_1fr] items-center gap-4`（左ラベル 220px ＋ 24h バー）。ラベル 1 段目 = 国旗＋国名（太字）＋営業中/時間外バッジ、
+  2 段目 = `23:01 (火) · UTC+9 · 重なり 8時間`（重なりは `text-emerald-600 font-medium`。30 分単位は「5.5時間」。2 段目は省略表示せず、
+  フォント幅で入りきらない場合は「· 重なり …」だけを次の行に送る）。
   バーは `relative h-9 bg-slate-100 rounded-md`、3 時間ごとのグリッド線、基準国の営業時間帯を全行に破線の薄緑帯で表示、
   各国の営業時間は `absolute h-6 top-1.5 bg-emerald-400/80 border border-emerald-600 rounded`（日をまたぐ場合は分割）、
-  バーの下に現地時刻（基準時間の 0/6/12/18 時の位置）、現在時刻は全行を貫く 1 本の赤線（`w-0.5 bg-rose-500 z-20`）。スマホ（640px 未満）は縦積み。
-- **各国の稼働カレンダー＆ガントチャート**：全幅パネル内の `overflow-x-auto` マトリクス。左ラベル列は `sticky left-0 z-10` の 210px
-  （スマホは 112px）＋ `border-r`。1 日 = 28px 列（`w-7`）、セルは 26×28px ＋ 左右 1px マージン（列幅 28px を保ち、ヘッダー・ガントと 1px もずれない）。
+  バーの下に現地時刻（基準時間の 0/6/12/18 時の位置）、現在時刻は全行を貫く 1 本の赤線（`w-0.5 bg-rose-500 z-20`）。
+- **各国の稼働カレンダー＆ガントチャート**：パネル内の `overflow-x-auto` マトリクス。左ラベル列は `sticky left-0 z-10` の 210px
+  ＋ `border-r`。1 日 = 28px 列（`w-7`）、セルは 26×28px ＋ 左右 1px マージン（列幅 28px を保ち、ヘッダー・ガントと 1px もずれない）。
   行の高さ 32px（`h-8`）。ヘッダーはバッジ行（今日 / 発注期限・希望納期 など＋縦の実線）→ 年月 → 曜日と日付。
   ガントバーは `h-6 rounded` で、開始日〜終了日のセル境界にぴったり揃える（left = 開始列×28+1, width = 日数×28−2）。
+  重なり順：セル `z-[1]` < 縦の実線 `z-[5]` < ガントバー `z-[6]`（線がバーのラベルを横切らない）< 左ラベル列 `z-10`。
 
 ## UI 表記ルール（国旗・国名）
 
@@ -95,8 +115,9 @@ src/
 2. **`JP` / `TH` などの 2 文字の国コードを画面に出さない**（国コードは内部 ID・URL 用のみ。`CountryInfo.code` を表示に使わない）。
    州・地域のコード（例: `CA`、`10`）も表示しない。
 3. **国旗に絵文字を使わない**（Windows では 🇯🇵 が「JP」の文字になる）。`components/CountryFlag.tsx` を使う。
-   国旗は `flag-icons`（MIT）の SVG をこのサイトから配信（外部 CDN なし）。`?no-inline` で個別アセットにしているため、
-   ブラウザは表示中の国旗だけを取得する。
+   国旗は **flagcdn.com の PNG**（`https://flagcdn.com/w40/{国コード小文字}.png`、高 DPI では `w80`、`referrerPolicy="no-referrer"`）を優先し、
+   読み込めない場合（オフライン・社内プロキシで遮断・該当画像なし）は同梱の `flag-icons`（MIT）SVG に自動で切り替え、それも無ければ灰色の枠を表示する。
+   同梱 SVG は `?no-inline` で個別アセットにしているため、フォールバック時もブラウザは表示中の国旗だけを取得する。
 4. `<select>` の option は画像を表示できないため国名のみとし、選択中の国旗を select の左端に重ねて表示する。
 5. 英文出力（メール / WhatsApp）にも国旗絵文字を入れない（受信側が Windows の場合も文字化けさせない）。
 
@@ -135,7 +156,7 @@ src/
 ### 国・タイムゾーン・週末
 - カタログ = date-holidays 対応国（約 207）＋祝日データなしの追加国（KH, LA, MM, NP, MN, QA, KW, OM, JO, IQ, MV。週末と TZ のみ）。名称は `Intl.DisplayNames`（EN long / JA short）。
 - 初期状態：基準国 日本、比較対象は 韓国・台湾・中国・アメリカ・タイ・マレーシア・インド・ベトナム・シンガポール の 9 か国をこの順に表示
-  （`PRESET_PARTNER_COUNTRIES = KR, TW, CN, US, TH, MY, IN, VN, SG`。プリセットとしてワンクリック追加/解除も可）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）。
+  （`PRESET_PARTNER_COUNTRIES = KR, TW, CN, US, TH, MY, IN, VN, SG`。プリセットとしてワンクリック追加/解除も可）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）、表示タブ = 会議可能時間帯。
 - 既定の週末：土日（UAE も 2022 年から土日）。金土 = SA, EG, QA, KW, BH, OM, JO, IL, BD, DZ, IQ, LY, SD, MV／金のみ = IR／金日 = BN／土のみ = NP／マレーシアのケダ・クランタン・トレンガヌ州（MY-02/03/11）は金土。国ごとに UI で上書き可能。
 - タイムゾーン候補：US/CA/AU/BR/MX/RU は主要都市の厳選リスト、他は date-holidays の zones。地域を選ぶとその地域の TZ が既定になる（例 US-CA → America/Los_Angeles）。DST は Intl が自動反映。
 - タイムゾーン略称：DST のない主要ゾーンは固定表記（JST, KST, CST〔中国・台湾〕, ICT, MYT, SGT, IST, WIB など）、DST のあるゾーンは Intl（EST/EDT, CET/CEST…）、
@@ -143,7 +164,8 @@ src/
 
 ### 会議可能時間帯（`timezone.ts`）
 - 対象日の基準国 00:00〜24:00（DST 日は 23/25h）をウィンドウとし、各国の営業時間を最大 3 つの現地日付にまたがって切り出す。現地の非稼働日（週末/祝日/カスタム休日）の枠はハッチ表示し、重なり計算から除外。
-- メールの会議候補は「明日」から最大 21 日を走査し、基準国と相手国が 30 分以上重なる直近 3 日を提示。
+- 会議候補（`findUpcomingMeetingDays`）：Standard Email / WhatsApp は「明日」から、Meeting Proposal は会議タブの対象日（明日より前なら明日）から
+  最大 21 日を走査し、基準国と相手国が 30 分以上重なる直近 3 日を提示。
 
 ## URL クエリ（共有リンク）
 
@@ -160,21 +182,28 @@ src/
 | `hr`（複数） | `JP:0830-1730` | 国別営業時間 |
 | `rg`（複数） | `MY:10` | 国別の祝日地域（州） |
 | `off` / `work`（複数） | `TH:2027-02-16..2027-02-18:Lunar New Year` | カスタム休日 / 臨時稼働日（範囲・名称は任意） |
+| `tab` | `meeting` / `schedule` / `calendar` / `export` | 表示中のタブ（不正値は `meeting`） |
 
 - 状態変更のたびに `history.replaceState` で URL を更新。URL に状態がない場合は LocalStorage の前回状態 → 既定値の順で復元。
+  `tab` だけのリンク（例 `?tab=export`）は状態として扱わず、復元した状態（前回状態 or 既定値）にタブだけを適用する。
 - 不正値は `sanitizeState` で除去/既定値化（未知の国、存在しない日付、範囲外日数、未選択国のカレンダー → 基準国 など）。
 - LocalStorage キー：`glp:v1:presets`（名前付きプリセット = クエリ文字列）、`glp:v1:last-query`、`glp:v1:export-options`（宛名・署名等。**URL には含めない**）。
 
 ## 英文出力（`report.ts` → `exportText.ts`）
 
 - メール：Subject（順算 = Estimated Delivery / 逆算 = Order Deadline）→ 宛名 → KEY DATES → 逆算時の発注依頼文 → SCHEDULE BREAKDOWN（各工程の期間・日数・除外した祝日/カスタム休日）→ PUBLIC HOLIDAYS DURING THIS PERIOD → （任意）AVAILABLE MEETING TIMES → 免責・署名。
-- WhatsApp：`*太字*`・絵文字・国旗付きの短縮版。
+- WhatsApp / Chat：`*太字*`・絵文字（国旗絵文字は使わない）の短縮版。
+- Meeting Proposal（`renderMeetingProposal`）：Subject `Meeting Request – Proposed Times` → 宛名 → 候補日時（番号付き、`11:00–18:00 JST / 09:00–16:00 ICT`）
+  → 返信のお願い →（工程があれば）発注期限/納期の参考 → 署名。候補は「会議可能時間帯」タブの対象日（明日より前なら明日）から最大 21 日を走査し、
+  基準国と相手国の営業時間が 30 分以上重なる直近 3 日（双方の週末・祝日・カスタム休日を除外）。重なりが無い国（例: 日本と米国東部）は
+  双方の営業時間を示して時間外の打ち合わせを打診する文面にする。TZ 略称は候補ごとの日付で求める（期間中の夏時間切り替えに対応）。
 - オプション：日付形式（`dmy` 既定 / `mdy` / `iso`）、祝日の記載範囲（関係国 = 基準国＋工程で使う国＋相手国 / 全選択国 / なし）、現地語祝日名の併記、会議候補の記載、相手国。
+  Meeting Proposal では祝日関連のオプションは使わない（宛名・署名・参照番号・日付形式・相手国のみ）。
 - 祝日一覧の注記：`company holiday`（カスタム休日）、`bank holiday`（type=bank、例: 日本の 1/2・1/3・12/31）、`falls on a weekend`。工程ごとの「Excludes」には週末以外の祝日/休業日のみ記載。
 
 ## テスト
 
-`src/utils/*.test.ts`（69 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット 9 か国の順序と日本語名、全カタログ国の国旗 SVG の有無・日本語名の重複なし、台湾（UTC+8・旧正月）・インド（UTC+5:30・日本との重なり 5.5 時間）、UAE の週末・複数日のイード、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
+`src/utils/*.test.ts`（72 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット 9 か国の順序と日本語名、全カタログ国の国旗 SVG の有無・日本語名の重複なし、台湾（UTC+8・旧正月）・インド（UTC+5:30・日本との重なり 5.5 時間）、UAE の週末・複数日のイード、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力（`tab` を含む）、リデューサ、英文出力（Meeting Proposal の候補表示と重なりなしの文面を含む）。
 
 ## デプロイ
 
@@ -192,8 +221,9 @@ src/
 
 ### その他の静的ホスティング
 - **Cloudflare Pages**：Build command `npm run build`、Build output directory `dist`。
-- バンドル：アプリ本体 ~125 kB、React ~220 kB、vendor（date-holidays の全世界ルール＋moment-timezone＋国旗 URL 表）~1.47 MB（gzip ~253 kB）。
-  国旗 SVG は 271 ファイル（合計 ~2.7 MB）だが、表示中のものだけが取得される。vendor は別チャンクでキャッシュが効く。
+- バンドル：アプリ本体 ~135 kB、React ~220 kB、vendor（date-holidays の全世界ルール＋moment-timezone＋国旗 URL 表）~1.47 MB（gzip ~253 kB）。
+  国旗は通常 flagcdn.com から取得。同梱のフォールバック用 SVG は 271 ファイル（合計 ~2.7 MB）だが、必要になったものだけが取得される。
+  vendor は別チャンクでキャッシュが効く。
 
 ## 注意点・既知の制約
 

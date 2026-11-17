@@ -109,5 +109,6 @@ export function createDefaultState(today: ISODate): PlannerState {
     anchor: addDays(today, DEFAULT_LEAD_DAYS),
     steps: instantiateSteps(STEP_TEMPLATES[0].build(base, pickDefaultPartner(base, partners))),
     overrides: {},
+    tab: 'meeting',
   }
 }

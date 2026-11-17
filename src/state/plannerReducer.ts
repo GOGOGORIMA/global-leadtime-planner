@@ -1,5 +1,13 @@
 import { isKnownCountry } from '../data/countries'
-import { CALENDAR_DAYS, type CountrySettings, type DayOverride, type PlannerState, type Step } from '../types'
+import {
+  CALENDAR_DAYS,
+  isPlannerTab,
+  type CountrySettings,
+  type DayOverride,
+  type PlannerState,
+  type PlannerTab,
+  type Step,
+} from '../types'
 import { isISODate, normalizeStepDays, type ISODate, type ScheduleMode } from '../utils/dateCalc'
 import { isValidTimeZone } from '../utils/timezone'
 import { MAX_PARTNERS, MAX_STEPS, createId, type StepDefinition } from './defaults'
@@ -22,6 +30,7 @@ export type PlannerAction =
   | { type: 'toggleOverride'; country: string; date: ISODate; defaultWorking: boolean; label?: string }
   | { type: 'setOverrides'; country: string; dates: ISODate[]; override: DayOverride | null }
   | { type: 'clearOverrides'; country?: string }
+  | { type: 'setTab'; tab: PlannerTab }
   | { type: 'replace'; state: PlannerState }
 
 const MAX_LABEL_LENGTH = 80
@@ -118,6 +127,7 @@ export function sanitizeState(input: PlannerState, fallback: PlannerState): Plan
     anchor: isISODate(input.anchor) ? input.anchor : fallback.anchor,
     steps,
     overrides,
+    tab: isPlannerTab(input.tab) ? input.tab : fallback.tab,
   }
 }
 
@@ -261,6 +271,8 @@ export function plannerReducer(state: PlannerState, action: PlannerAction): Plan
       delete overrides[action.country]
       return { ...state, overrides }
     }
+    case 'setTab':
+      return isPlannerTab(action.tab) && action.tab !== state.tab ? { ...state, tab: action.tab } : state
     case 'replace':
       return action.state
     default:

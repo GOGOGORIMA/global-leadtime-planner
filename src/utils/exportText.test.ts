@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { CALENDAR_DAYS, type OverrideMap, type Step } from '../types'
 import { buildCalendarMap, makeCalendarResolver, resolveCountry } from './calendars'
 import { computeSchedule, type ScheduleMode } from './dateCalc'
-import { DEFAULT_EXPORT_OPTIONS, renderEmail, renderWhatsApp, type ExportOptions } from './exportText'
+import { DEFAULT_EXPORT_OPTIONS, renderEmail, renderMeetingProposal, renderWhatsApp, type ExportOptions } from './exportText'
 import { buildScheduleReport, type HolidayScope } from './report'
 
 const STEPS: Step[] = [
@@ -126,5 +126,39 @@ describe('UAE schedule with corrected holidays', () => {
     const text = renderEmail(report, options())
     expect(text).toContain('Excludes: Wed, 2 Dec 2026 – National Day; Thu, 3 Dec 2026 – National Day')
     expect(text).toContain('United Arab Emirates:\n- Wed, 2 Dec 2026 – Thu, 3 Dec 2026: National Day')
+  })
+})
+
+describe('Meeting Proposal', () => {
+  const jp = { code: 'JP', nameEn: 'Japan', timeZone: 'Asia/Tokyo', timeZoneAbbr: 'JST' }
+  const th = { code: 'TH', nameEn: 'Thailand', timeZone: 'Asia/Bangkok', timeZoneAbbr: 'ICT' }
+  const us = { code: 'US', nameEn: 'United States', timeZone: 'America/New_York', timeZoneAbbr: 'EST' }
+
+  it('lists the proposed windows in both time zones', () => {
+    const text = renderMeetingProposal(
+      options({ format: 'meeting', recipientName: 'Ms. Suda', reference: 'PO-1234', senderName: 'Taro Yamada' }),
+      {
+        base: jp,
+        others: [th],
+        days: [{ date: '2026-11-18', intervals: [{ start: Date.UTC(2026, 10, 18, 2), end: Date.UTC(2026, 10, 18, 9) }] }],
+      },
+      makeReport('backward', '2026-12-14'),
+    )
+    expect(text).toContain('Subject: Meeting Request – Proposed Times (Ref: PO-1234)')
+    expect(text).toContain('Dear Ms. Suda,')
+    expect(text).toContain('1. Wed, 18 Nov 2026: 11:00–18:00 JST / 09:00–16:00 ICT')
+    expect(text).toContain('the order would need to be confirmed by Tue, 17 Nov 2026 (Japan time).')
+    expect(text.endsWith('Best regards,\nTaro Yamada')).toBe(true)
+  })
+
+  it('offers a call outside office hours when business hours never overlap', () => {
+    const text = renderMeetingProposal(options({ format: 'meeting' }), {
+      base: jp,
+      others: [us],
+      days: [],
+      businessHours: { JP: '09:00–18:00', US: '09:00–18:00' },
+    })
+    expect(text).toContain('As our business hours do not overlap (Japan: 09:00–18:00 JST, United States: 09:00–18:00 EST)')
+    expect(text).not.toContain('1. ')
   })
 })

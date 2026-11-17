@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createDefaultState } from '../state/defaults'
 import { plannerReducer } from '../state/plannerReducer'
 import { CALENDAR_DAYS, type PlannerState } from '../types'
-import { parseState, serializeState } from './urlState'
+import { parseState, readTabParam, serializeState } from './urlState'
 
 const fallback = createDefaultState('2026-11-17')
 
@@ -34,6 +34,7 @@ describe('URL state', () => {
       },
       JP: { '2026-12-26': { kind: 'work' } },
     },
+    tab: 'calendar',
   }
 
   it('round-trips the full planner state', () => {
@@ -57,6 +58,15 @@ describe('URL state', () => {
     expect(params.getAll('work')).toEqual(['JP:2026-12-26'])
     expect(params.getAll('wk')).toEqual(['TH:-', 'MY:56'])
     expect(params.getAll('hr')).toEqual(['JP:0830-1730'])
+    expect(params.get('tab')).toBe('calendar')
+  })
+
+  it('reads and validates the tab parameter', () => {
+    expect(readTabParam('?tab=export')).toBe('export')
+    expect(readTabParam('tab=schedule&base=JP')).toBe('schedule')
+    expect(readTabParam('?tab=admin')).toBeUndefined()
+    expect(parseState('?base=JP&tab=nope', fallback).state.tab).toBe('meeting')
+    expect(plannerReducer(fallback, { type: 'setTab', tab: 'calendar' }).tab).toBe('calendar')
   })
 
   it('ignores queries without planner state', () => {

@@ -34,11 +34,10 @@ import { Badge, Card, type Tone } from './ui'
 const HOUR_MS = 3_600_000
 
 /**
- * Row layout: 220px label column + 24-hour bar. Below `sm` (phones) the label stacks above the bar.
- * The hour scale, every country row, the "everyone" row and the now-line overlay share this grid,
- * so all bars line up exactly.
+ * Row layout: 220px label column + 24-hour bar, always side by side. The hour scale, every country
+ * row, the "everyone" row and the now-line overlay share this grid, so all bars line up exactly.
  */
-const ROW_GRID = 'grid grid-cols-1 gap-x-4 sm:grid-cols-[220px_1fr]'
+const ROW_GRID = 'grid grid-cols-[220px_1fr] items-center gap-x-4'
 
 interface MeetingPlannerProps {
   countries: readonly ResolvedCountry[]
@@ -185,7 +184,7 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
       <div ref={containerRef} className="relative" onMouseMove={onMouseMove} onMouseLeave={() => setHover(null)}>
         {/* Hour scale (base country time, 00–24, every 3 hours) */}
         <div className={ROW_GRID}>
-          <div className="hidden truncate text-xs font-medium text-slate-500 sm:block">
+          <div className="truncate text-xs font-medium text-slate-500">
             {formatJaDate(date)} の {base.info.nameJa}時間
           </div>
           <div ref={barRef} className="relative h-5 min-w-0">
@@ -195,7 +194,6 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
                 className={cx(
                   'absolute -translate-x-1/2 text-[10px] text-slate-400 tabular-nums',
                   h % 3 !== 0 && 'hidden',
-                  h % 6 !== 0 && 'max-sm:hidden',
                   h === 0 && 'translate-x-0',
                   h === hours && '-translate-x-full',
                 )}
@@ -214,7 +212,7 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
               const offset = formatUtcOffset(getTimeZoneOffset(now, country.timeZone))
               const hoursLabel = `${formatClock(country.workStart)}-${formatClock(country.workEnd)}`
               return (
-                <li key={country.code} className={cx(ROW_GRID, 'items-center gap-y-1 border-b border-slate-100 py-2.5')}>
+                <li key={country.code} className={cx(ROW_GRID, 'border-b border-slate-100 py-2.5')}>
                   {/* Label column (220px) */}
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-1.5">
@@ -225,14 +223,20 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
                         <span title={status.title}>{status.label}</span>
                       </Badge>
                     </div>
-                    <div className="mt-0.5 truncate text-xs text-slate-500 tabular-nums">
-                      <span className="font-semibold text-slate-700">{formatInstantClock(now, country.timeZone)}</span>{' '}
-                      ({weekdayJa(getZonedDateTime(now, country.timeZone).date)}) · {offset}
+                    {/* Never truncated: with a wide fallback font the overlap moves to its own line instead. */}
+                    <div className="mt-0.5 text-xs tracking-tight text-slate-500 tabular-nums">
+                      <span className="whitespace-nowrap">
+                        <span className="font-semibold text-slate-700">{formatInstantClock(now, country.timeZone)}</span>{' '}
+                        ({weekdayJa(getZonedDateTime(now, country.timeZone).date)}) · {offset}
+                      </span>
                       {!country.isBase && (
                         <>
-                          {' · '}
-                          <span className={overlapMinutes > 0 ? 'font-medium text-emerald-600' : 'text-slate-400'}>
-                            重なり {overlapMinutes > 0 ? formatDuration(overlapMinutes) : 'なし'}
+                          {' '}
+                          <span className="whitespace-nowrap">
+                            ·{' '}
+                            <span className={overlapMinutes > 0 ? 'font-medium text-emerald-600' : 'text-slate-400'}>
+                              重なり {overlapMinutes > 0 ? formatDuration(overlapMinutes) : 'なし'}
+                            </span>
                           </span>
                         </>
                       )}
@@ -272,9 +276,6 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
                           </div>
                         )
                       })}
-                      {showNow && (
-                        <span className="absolute top-0 bottom-0 z-20 w-0.5 bg-rose-500 sm:hidden" style={{ left: `${pct(now)}%` }} />
-                      )}
                     </div>
                     {!country.isBase && (
                       <div className="relative mt-0.5 h-3.5 text-[10px] text-slate-400 tabular-nums">
@@ -292,7 +293,7 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
               )
             })}
 
-            <li className={cx(ROW_GRID, 'items-center gap-y-1 py-2.5')}>
+            <li className={cx(ROW_GRID, 'py-2.5')}>
               <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-600 text-white">
                   <Users size={15} />
@@ -323,16 +324,13 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
                     </div>
                   )
                 })}
-                {showNow && (
-                  <span className="absolute top-0 bottom-0 z-20 w-0.5 bg-rose-500 sm:hidden" style={{ left: `${pct(now)}%` }} />
-                )}
               </div>
             </li>
           </ul>
 
-          {/* Current time: one red line through every row (desktop / tablet) */}
+          {/* Current time: one red line through every row */}
           {showNow && (
-            <div className={cx(ROW_GRID, 'pointer-events-none absolute inset-0 max-sm:hidden')} aria-hidden>
+            <div className={cx(ROW_GRID, 'pointer-events-none absolute inset-0 items-stretch')} aria-hidden>
               <div />
               <div className="relative">
                 <span
