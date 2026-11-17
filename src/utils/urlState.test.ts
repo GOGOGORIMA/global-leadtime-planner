@@ -6,7 +6,11 @@ import { parseState, readTabParam, serializeState } from './urlState'
 
 const fallback = createDefaultState('2026-11-17')
 
-const withoutIds = (state: PlannerState) => ({ ...state, steps: state.steps.map(({ id: _id, ...rest }) => rest) })
+const withoutIds = (state: PlannerState) => ({
+  ...state,
+  steps: state.steps.map(({ id: _id, ...rest }) => rest),
+  cargo: state.cargo.map(({ id: _id, ...rest }) => rest),
+})
 
 describe('URL state', () => {
   const state: PlannerState = {
@@ -35,6 +39,33 @@ describe('URL state', () => {
       JP: { '2026-12-26': { kind: 'work' } },
     },
     tab: 'calendar',
+    container: '40hc',
+    cargo: [
+      {
+        id: 'x',
+        name: 'Case #1 本体木箱_v2 (No.1)',
+        length: 2200,
+        width: 1500,
+        height: 2400,
+        weight: 1250.5,
+        quantity: 1,
+        stackable: false,
+        rotatable: false,
+        color: '#ef4444',
+      },
+      {
+        id: 'y',
+        name: 'Accessories pallet',
+        length: 1100,
+        width: 1100,
+        height: 1000,
+        weight: 300,
+        quantity: 6,
+        stackable: true,
+        rotatable: true,
+        color: '#f59e0b',
+      },
+    ],
   }
 
   it('round-trips the full planner state', () => {
@@ -59,6 +90,28 @@ describe('URL state', () => {
     expect(params.getAll('wk')).toEqual(['TH:-', 'MY:56'])
     expect(params.getAll('hr')).toEqual(['JP:0830-1730'])
     expect(params.get('tab')).toBe('calendar')
+    expect(params.get('ct')).toBe('40hc')
+    expect(params.getAll('cg')).toEqual([
+      '2200x1500x2400_1250.5_1_-_ef4444_Case #1 本体木箱_v2 (No.1)',
+      '1100x1100x1000_300_6_sr_f59e0b_Accessories pallet',
+    ])
+  })
+
+  it('keeps an empty cargo list and drops malformed cargo rows', () => {
+    const empty = parseState(`?${serializeState({ ...state, cargo: [] })}`, fallback)
+    expect(empty.state.cargo).toEqual([])
+    const parsed = parseState(
+      '?ct=xl&cg=10x20_5_1_s_ffffff_Bad+dims&cg=0x50000x300_-7_5000_r_zzz_&cg=600x400x400_15.25_24_sr_10B981_Carton',
+      fallback,
+    ).state
+    expect(parsed.container).toBe(fallback.container) // unknown container id → default
+    expect(parsed.cargo.map(({ id: _id, ...rest }) => rest)).toEqual([
+      // clamped to 1–20,000 mm, 0 kg, 999 pcs; default name and a palette color
+      { name: 'Case #1', length: 1, width: 20000, height: 300, weight: 0, quantity: 999, stackable: false, rotatable: true, color: '#6366f1' },
+      { name: 'Carton', length: 600, width: 400, height: 400, weight: 15.3, quantity: 24, stackable: true, rotatable: true, color: '#10b981' },
+    ])
+    // A link without cargo parameters keeps the default sample shipment.
+    expect(parseState('?base=JP', fallback).state.cargo.length).toBe(fallback.cargo.length)
   })
 
   it('reads and validates the tab parameter', () => {
@@ -67,6 +120,7 @@ describe('URL state', () => {
     expect(readTabParam('?tab=admin')).toBeUndefined()
     expect(parseState('?base=JP&tab=nope', fallback).state.tab).toBe('meeting')
     expect(plannerReducer(fallback, { type: 'setTab', tab: 'calendar' }).tab).toBe('calendar')
+    expect(readTabParam('?tab=vanning')).toBe('vanning')
   })
 
   it('ignores queries without planner state', () => {
@@ -124,6 +178,27 @@ describe('plannerReducer', () => {
     expect(s.settings.US).toEqual({ timeZone: 'America/Chicago', weekend: [0] })
     s = plannerReducer(s, { type: 'updateSettings', code: 'US', patch: { timeZone: undefined, weekend: undefined } })
     expect(s.settings.US).toBeUndefined()
+  })
+
+  it('edits the cargo list and the container', () => {
+    let s = plannerReducer(fallback, { type: 'setContainer', container: '4t' })
+    expect(s.container).toBe('4t')
+    s = plannerReducer(s, { type: 'setCargo', cargo: [] })
+    s = plannerReducer(s, { type: 'addCargo' })
+    s = plannerReducer(s, { type: 'addCargo', cargo: { name: 'Euro pallet', length: 1200, width: 800 } })
+    expect(s.cargo.map((c) => [c.name, c.length, c.width, c.color])).toEqual([
+      ['Case #1', 1100, 1100, '#6366f1'],
+      ['Euro pallet', 1200, 800, '#f59e0b'],
+    ])
+    const id = s.cargo[1].id
+    s = plannerReducer(s, { type: 'updateCargo', id, patch: { quantity: 0, weight: 12.345, name: '' } })
+    expect(s.cargo[1]).toMatchObject({ quantity: 1, weight: 12.3, name: '' }) // name stays empty while typing
+    s = plannerReducer(s, { type: 'duplicateCargo', id })
+    expect(s.cargo).toHaveLength(3)
+    expect(s.cargo[2]).toMatchObject({ length: 1200, width: 800, color: '#10b981' })
+    expect(s.cargo[2].id).not.toBe(id)
+    s = plannerReducer(s, { type: 'removeCargo', id })
+    expect(s.cargo.map((c) => c.color)).toEqual(['#6366f1', '#10b981'])
   })
 
   it('adds, moves, updates and removes steps', () => {

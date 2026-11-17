@@ -1,9 +1,16 @@
+import { DEFAULT_CONTAINER } from '../data/containers'
 import { DEFAULT_BASE_COUNTRY, PRESET_PARTNER_COUNTRIES } from '../data/countries'
-import { CALENDAR_DAYS, type PlannerState, type Step } from '../types'
+import { CALENDAR_DAYS, type CargoItem, type PlannerState, type Step } from '../types'
 import { addDays, type ISODate } from '../utils/dateCalc'
 
 export const MAX_STEPS = 20
 export const MAX_PARTNERS = 30
+/** Loading simulator limits. */
+export const MAX_CARGO_ITEMS = 30
+export const MAX_CARGO_QUANTITY = 999
+/** Largest accepted piece dimension (mm) and weight (kg). */
+export const MAX_CARGO_DIMENSION = 20000
+export const MAX_CARGO_WEIGHT = 100000
 /** Default requested delivery date for the backward mode: today + 60 days. */
 export const DEFAULT_LEAD_DAYS = 60
 
@@ -98,6 +105,86 @@ export const STEP_NAME_SUGGESTIONS: ReadonlyArray<{ en: string; ja: string }> = 
   { en: 'Payment Confirmation', ja: '入金確認' },
 ]
 
+export type CargoDefinition = Omit<CargoItem, 'id'>
+
+/** Auto-assigned cargo colors (distinct hues, readable with black edges). */
+export const CARGO_COLORS = [
+  '#6366f1',
+  '#f59e0b',
+  '#10b981',
+  '#ef4444',
+  '#0ea5e9',
+  '#a855f7',
+  '#f97316',
+  '#14b8a6',
+  '#ec4899',
+  '#84cc16',
+  '#64748b',
+  '#eab308',
+] as const
+
+/** First palette color not used yet (cycles when all are taken). */
+export function nextCargoColor(used: readonly string[]): string {
+  const taken = new Set(used.map((c) => c.toLowerCase()))
+  return CARGO_COLORS.find((c) => !taken.has(c)) ?? CARGO_COLORS[used.length % CARGO_COLORS.length]
+}
+
+/** Sample shipment shown on first use: a non-stackable machine crate, pallets and cartons. */
+export const SAMPLE_CARGO: readonly CargoDefinition[] = [
+  {
+    name: 'Case #1 Main Unit (Crate)',
+    length: 2200,
+    width: 1500,
+    height: 1800,
+    weight: 1000,
+    quantity: 1,
+    stackable: false,
+    rotatable: true,
+    color: CARGO_COLORS[0],
+  },
+  {
+    name: 'Case #2 Accessories (Pallet)',
+    length: 1100,
+    width: 1100,
+    height: 1000,
+    weight: 300,
+    quantity: 6,
+    stackable: true,
+    rotatable: true,
+    color: CARGO_COLORS[1],
+  },
+  {
+    name: 'Case #3 Spare Parts (Carton)',
+    length: 600,
+    width: 400,
+    height: 400,
+    weight: 15,
+    quantity: 24,
+    stackable: true,
+    rotatable: true,
+    color: CARGO_COLORS[2],
+  },
+]
+
+/** Defaults for a newly added cargo row (a T11 pallet). */
+export function newCargoDefinition(index: number, color: string): CargoDefinition {
+  return {
+    name: `Case #${index + 1}`,
+    length: 1100,
+    width: 1100,
+    height: 1000,
+    weight: 300,
+    quantity: 1,
+    stackable: true,
+    rotatable: true,
+    color,
+  }
+}
+
+export function instantiateCargo(definitions: readonly CargoDefinition[]): CargoItem[] {
+  return definitions.map((d) => ({ ...d, id: createId() }))
+}
+
 export function createDefaultState(today: ISODate): PlannerState {
   const base = DEFAULT_BASE_COUNTRY
   const partners = [...PRESET_PARTNER_COUNTRIES]
@@ -110,5 +197,7 @@ export function createDefaultState(today: ISODate): PlannerState {
     steps: instantiateSteps(STEP_TEMPLATES[0].build(base, pickDefaultPartner(base, partners))),
     overrides: {},
     tab: 'meeting',
+    container: DEFAULT_CONTAINER,
+    cargo: instantiateCargo(SAMPLE_CARGO),
   }
 }

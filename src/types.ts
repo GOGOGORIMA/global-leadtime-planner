@@ -1,10 +1,11 @@
+import type { ContainerId } from './data/containers'
 import type { ISODate, OverrideKind, ScheduleMode } from './utils/dateCalc'
 
 /** Calendar id for steps counted in calendar days (every day is a working day). */
 export const CALENDAR_DAYS = 'calendar'
 
 /** Right-pane tabs (also the `?tab=` URL parameter). */
-export const PLANNER_TABS = ['meeting', 'schedule', 'calendar', 'export'] as const
+export const PLANNER_TABS = ['meeting', 'schedule', 'calendar', 'export', 'vanning'] as const
 export type PlannerTab = (typeof PLANNER_TABS)[number]
 
 export function isPlannerTab(value: unknown): value is PlannerTab {
@@ -41,6 +42,26 @@ export interface DayOverride {
 /** country code → date → manual override. */
 export type OverrideMap = Record<string, Record<ISODate, DayOverride>>
 
+/** One cargo type (case / SKU) of the loading simulator. Sizes in mm, weight in kg per piece. */
+export interface CargoItem {
+  id: string
+  /** Case / SKU name — also used in the English packing summary, so English is recommended. */
+  name: string
+  /** Footprint: `length` × `width`. Pieces are never tipped over, so `height` stays vertical. */
+  length: number
+  width: number
+  height: number
+  /** Gross weight of one piece (kg). */
+  weight: number
+  quantity: number
+  /** `false` = 上積み厳禁: nothing may be placed on top of this piece. */
+  stackable: boolean
+  /** Allow a 90° turn on the floor (length ⇄ width). */
+  rotatable: boolean
+  /** Display color `#rrggbb`. */
+  color: string
+}
+
 export interface PlannerState {
   base: string
   partners: string[]
@@ -52,4 +73,8 @@ export interface PlannerState {
   overrides: OverrideMap
   /** Open tab of the right pane. */
   tab: PlannerTab
+  /** Loading simulator: selected container / truck. */
+  container: ContainerId
+  /** Loading simulator: cargo list. */
+  cargo: CargoItem[]
 }

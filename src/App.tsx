@@ -8,6 +8,7 @@ import { SchedulePanel } from './components/SchedulePanel'
 import { tabButtonId, tabPanelId } from './components/tabIds'
 import { TabBar } from './components/TabBar'
 import { Timeline } from './components/Timeline'
+import { VanningPanel } from './components/VanningPanel'
 import { useNow } from './hooks/useNow'
 import { createFreshState, usePlanner } from './hooks/usePlanner'
 import { useStoredState } from './hooks/useStoredState'
@@ -37,7 +38,7 @@ export default function App() {
   const [meetingDate, setMeetingDate] = useState<ISODate | null>(null)
   const [exportOptions, setExportOptions] = useStoredState(STORAGE_KEYS.exportOptions, DEFAULT_EXPORT_OPTIONS)
 
-  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab } = state
+  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab, container, cargo } = state
   const countries = useMemo(
     () => resolveSelectedCountries({ base: baseCode, partners, settings }),
     [baseCode, partners, settings],
@@ -147,11 +148,15 @@ export default function App() {
                 recipientCountry={recipientCountry}
                 today={today}
                 meetingDate={meetingDate}
+                cargo={cargo}
+                container={container}
                 options={exportOptions}
                 onOptionsChange={setExportOptions}
                 onShowMeeting={() => setTab('meeting')}
+                onShowVanning={() => setTab('vanning')}
               />
             )}
+            {tab === 'vanning' && <VanningPanel container={container} cargo={cargo} dispatch={dispatch} today={today} />}
           </div>
 
           {/* Inside the right column so the sticky left pane is never pushed up at the end of the page. */}

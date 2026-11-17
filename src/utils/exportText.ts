@@ -2,6 +2,7 @@
  * Customer-facing English text (e-mail / WhatsApp) generated from a `ScheduleReport`.
  * Pure functions: same report + options → same text.
  */
+import type { CategorySuggestion, PackingSummary } from './binPacking'
 import { yearOf, type ISODate } from './dateCalc'
 import { formatEnglishDate, formatEnglishRange, type EnglishDateStyle } from './dateFormat'
 import type { ReportCountry, ReportHoliday, ReportStep, ScheduleReport } from './report'
@@ -20,6 +21,8 @@ export interface ExportOptions {
   includeLocalNames: boolean
   holidayScope: 'relevant' | 'all' | 'none'
   includeMeeting: boolean
+  /** Append the "Packing & Container Summary" from the loading simulator (tab ⑤). */
+  includePacking: boolean
   /** Country of the recipient for meeting-time suggestions; '' = automatic. */
   recipientCountry: string
 }
@@ -34,6 +37,7 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
   includeLocalNames: false,
   holidayScope: 'relevant',
   includeMeeting: false,
+  includePacking: false,
   recipientCountry: '',
 }
 
@@ -79,7 +83,66 @@ function holidayRangeText(holiday: ReportHoliday, style: EnglishDateStyle, optio
   return formatEnglishRange(holiday.start, holiday.end, style, options)
 }
 
-export function renderEmail(report: ScheduleReport, options: ExportOptions, meeting?: MeetingSuggestion): string {
+const formatKg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 1 })
+const formatMm = (n: number) => Math.round(n).toLocaleString('en-US')
+const formatPercent = (ratio: number) => `${(ratio * 100).toFixed(1)}%`
+const pieces = (n: number) => `${n.toLocaleString('en-US')} pc${n === 1 ? '' : 's'}`
+const sizeText = (x: { length: number; width: number; height: number }) =>
+  `${formatMm(x.length)} × ${formatMm(x.width)} × ${formatMm(x.height)} mm`
+
+/** `1 × 20ft Dry container`, or why no standard size of this category works. */
+function equipmentText(suggestion: CategorySuggestion): string {
+  const best = suggestion.best
+  if (best?.units) return `${best.units} × ${best.spec.nameEn}`
+  const largest = suggestion.plans[suggestion.plans.length - 1]
+  const why =
+    largest?.blocked === 'door'
+      ? 'a package exceeds the door height'
+      : largest?.blocked === 'weight'
+        ? 'a package exceeds the maximum payload'
+        : 'a package exceeds the inside dimensions'
+  return suggestion.category === 'sea'
+    ? `not possible in standard containers (${why}; special equipment such as open-top or flat-rack required)`
+    : `not possible by standard truck (${why})`
+}
+
+/** "PACKING & CONTAINER SUMMARY" block of the e-mail (loading simulator, tab ⑤). */
+export function renderPackingSection(packing: PackingSummary): string[] {
+  const lines: string[] = ['PACKING & CONTAINER SUMMARY']
+  if (packing.pieces === 0) {
+    lines.push('- No packages entered yet.')
+    return lines
+  }
+  lines.push(`- Packages: ${pieces(packing.pieces)} (${packing.types} type${packing.types === 1 ? '' : 's'})`)
+  lines.push(`- Total volume: ${packing.totalVolume.toFixed(1)} m³`)
+  lines.push(`- Total gross weight: ${formatKg(packing.totalWeight)} kg`)
+  if (packing.largest) lines.push(`- Largest package: ${sizeText(packing.largest)} (${packing.largest.name})`)
+  if (packing.nonStackablePieces > 0) lines.push(`- Non-stackable: ${pieces(packing.nonStackablePieces)} (no top load)`)
+  lines.push(`- Recommended equipment (sea): ${equipmentText(packing.sea)}`)
+  lines.push(`- Recommended equipment (road): ${equipmentText(packing.truck)}`)
+  const plan = packing.selected
+  const name = plan.spec.nameEn
+  lines.push(
+    plan.loadedPieces === plan.totalPieces
+      ? `- Loading plan (${name}): all ${pieces(plan.totalPieces)} fit – ${formatPercent(plan.volumeRatio)} of volume, ${formatPercent(plan.weightRatio)} of max. payload`
+      : `- Loading plan (${name}): ${plan.loadedPieces} of ${pieces(plan.totalPieces)} fit – the remaining ${pieces(plan.totalPieces - plan.loadedPieces)} require${plan.totalPieces - plan.loadedPieces === 1 ? 's' : ''} additional space`,
+  )
+  lines.push('Package list:')
+  packing.items.forEach((item, i) => {
+    lines.push(
+      `${i + 1}. ${item.name}: ${sizeText(item)}, ${formatKg(item.weight)} kg × ${item.quantity}${item.stackable ? '' : ' (non-stackable)'}`,
+    )
+  })
+  lines.push('Note: the loading plan is an estimate based on the package dimensions and weights above.')
+  return lines
+}
+
+export function renderEmail(
+  report: ScheduleReport,
+  options: ExportOptions,
+  meeting?: MeetingSuggestion,
+  packing?: PackingSummary | null,
+): string {
   const style = options.dateStyle
   const d = (date: ISODate) => formatEnglishDate(date, style)
   const lines: string[] = []
@@ -164,6 +227,11 @@ export function renderEmail(report: ScheduleReport, options: ExportOptions, meet
     lines.push('')
   }
 
+  if (options.includePacking && packing) {
+    lines.push(...renderPackingSection(packing))
+    lines.push('')
+  }
+
   if (options.includeMeeting && meeting && meeting.days.length > 0) {
     const participants = [meeting.base, ...meeting.others]
     lines.push('AVAILABLE MEETING TIMES')
@@ -187,7 +255,12 @@ export function renderEmail(report: ScheduleReport, options: ExportOptions, meet
   return lines.join('\n')
 }
 
-export function renderWhatsApp(report: ScheduleReport, options: ExportOptions, meeting?: MeetingSuggestion): string {
+export function renderWhatsApp(
+  report: ScheduleReport,
+  options: ExportOptions,
+  meeting?: MeetingSuggestion,
+  packing?: PackingSummary | null,
+): string {
   const style = options.dateStyle
   const hasSteps = report.steps.length > 0
   const multiYear = hasSteps && yearOf(report.start) !== yearOf(report.end)
@@ -228,6 +301,14 @@ export function renderWhatsApp(report: ScheduleReport, options: ExportOptions, m
         lines.push(`${group.country.nameEn}: ${items.join(', ')}`)
       }
     }
+  }
+
+  if (options.includePacking && packing && packing.pieces > 0) {
+    lines.push('')
+    lines.push('*Packing summary*')
+    lines.push(`📦 ${pieces(packing.pieces)} · ${packing.totalVolume.toFixed(1)} m³ · ${formatKg(packing.totalWeight)} kg`)
+    lines.push(`🚢 Sea: ${equipmentText(packing.sea)}`)
+    lines.push(`🚚 Road: ${equipmentText(packing.truck)}`)
   }
 
   if (options.includeMeeting && meeting && meeting.days.length > 0) {
@@ -300,7 +381,14 @@ export function renderMeetingProposal(
   return lines.join('\n')
 }
 
-export function renderExport(report: ScheduleReport, options: ExportOptions, meeting?: MeetingSuggestion): string {
+export function renderExport(
+  report: ScheduleReport,
+  options: ExportOptions,
+  meeting?: MeetingSuggestion,
+  packing?: PackingSummary | null,
+): string {
   if (options.format === 'meeting' && meeting) return renderMeetingProposal(options, meeting, report)
-  return options.format === 'whatsapp' ? renderWhatsApp(report, options, meeting) : renderEmail(report, options, meeting)
+  return options.format === 'whatsapp'
+    ? renderWhatsApp(report, options, meeting, packing)
+    : renderEmail(report, options, meeting, packing)
 }

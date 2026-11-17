@@ -1,0 +1,457 @@
+import { AlertTriangle, ArrowRight, Box, CircleCheck, Container, Info, Package, Ship, Truck } from 'lucide-react'
+import { Component, Suspense, lazy, useMemo, type Dispatch, type ReactNode } from 'react'
+import {
+  CATEGORY_LABELS,
+  getContainerSpec,
+  specsOfCategory,
+  type ContainerCategory,
+  type ContainerId,
+  type ContainerSpec,
+} from '../data/containers'
+import type { PlannerAction } from '../state/plannerReducer'
+import type { CargoItem } from '../types'
+import {
+  MAX_PIECES,
+  analyzePacking,
+  fillLevel,
+  suggestForCategory,
+  type CategorySuggestion,
+  type PackingResult,
+  type UnitPlan,
+} from '../utils/binPacking'
+import type { ISODate } from '../utils/dateCalc'
+import { CargoList } from './CargoList'
+import { cx, focusRing } from './classes'
+import type { SnapshotInfo } from './LoadViewer3D'
+import { Card, Segmented } from './ui'
+
+// three.js (~600 kB) is only downloaded when this tab is opened.
+const LoadViewer3D = lazy(() => import('./LoadViewer3D'))
+
+interface VanningPanelProps {
+  container: ContainerId
+  cargo: readonly CargoItem[]
+  dispatch: Dispatch<PlannerAction>
+  today: ISODate
+}
+
+const mm = (n: number) => Math.round(n).toLocaleString('en-US')
+const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 1 })
+const m3 = (n: number) => n.toFixed(1)
+const pct = (ratio: number) => `${(ratio * 100).toFixed(1)}%`
+const pct0 = (ratio: number) => `${Math.round(ratio * 100)}%`
+
+const FILL_LABELS = { roomy: '余裕あり', good: '適正', full: 'ほぼ満載' } as const
+
+function dims(spec: ContainerSpec): string {
+  return `${mm(spec.length)} × ${mm(spec.width)} × ${mm(spec.height)} mm`
+}
+
+/** Shown when the lazy 3D chunk fails to load (offline, blocked). */
+class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div className="flex h-[480px] items-center justify-center rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+        3D ビューアを読み込めませんでした（通信エラー、または WebGL 非対応）。積載結果は貨物リストとメーターで確認できます。
+      </div>
+    )
+  }
+}
+
+function ViewerPlaceholder() {
+  return (
+    <div className="flex h-[528px] items-center justify-center rounded-xl border border-slate-200 bg-linear-to-b from-white to-slate-100 text-sm text-slate-500">
+      3D ビューアを読み込み中…
+    </div>
+  )
+}
+
+function blockedText(plan: UnitPlan): string {
+  switch (plan.blocked) {
+    case 'door':
+      return `${plan.spec.label} のドア開口高 ${mm(plan.spec.doorHeight)} mm を超える貨物があります`
+    case 'weight':
+      return `1 個で ${plan.spec.label} の最大積載 ${kg(plan.spec.maxPayload)} kg を超える貨物があります`
+    case 'many':
+      return '必要な台数・本数が多すぎます'
+    default:
+      return `${plan.spec.label} の内寸 ${dims(plan.spec)} に収まらない貨物があります`
+  }
+}
+
+function SuggestionCard({
+  suggestion,
+  current,
+  hasCargo,
+  onSelect,
+}: {
+  suggestion: CategorySuggestion
+  current: ContainerId
+  hasCargo: boolean
+  onSelect: (id: ContainerId) => void
+}) {
+  const sea = suggestion.category === 'sea'
+  const Icon = sea ? Ship : Truck
+  const best = suggestion.best
+  let headline: string
+  let detail: string
+  let tone: 'ok' | 'bad' | 'none'
+  if (!hasCargo) {
+    headline = `${sea ? '海上' : '陸路'}の最適規格を判定します`
+    detail = '貨物を入力すると、総容積・総重量・最大寸法から自動で判定します。'
+    tone = 'none'
+  } else if (!best) {
+    const largest = suggestion.plans[suggestion.plans.length - 1]
+    headline = sea ? '標準の海上コンテナでは輸送できません' : 'トラックでは輸送できません'
+    detail = `${blockedText(largest)}。${sea ? 'オープントップ・フラットラック等の特殊コンテナを検討してください。' : '大型の特殊車両を検討してください。'}`
+    tone = 'bad'
+  } else {
+    const units = best.units ?? 1
+    const level = FILL_LABELS[fillLevel(best.fill)]
+    headline =
+      units === 1
+        ? sea
+          ? `海上なら ${best.spec.label} で積載可能（${level}）`
+          : `陸路なら ${best.spec.label} × 1台が最適（${level}）`
+        : sea
+          ? `海上なら ${best.spec.label} × ${units}本が必要`
+          : `陸路なら ${best.spec.label} × ${units}台が最適`
+    const others = suggestion.plans
+      .filter((p) => p !== best)
+      .map((p) => (p.units ? `${p.spec.label} ×${p.units}${p.spec.unitJa}` : `${p.spec.label} 不可`))
+    detail = `${units === 1 ? '' : '1本・1台あたり平均 '}容積 ${pct0(best.volumeRatio)}・重量 ${pct0(best.weightRatio)}・荷室長 ${pct0(best.lengthRatio)}${others.length ? `（他: ${others.join('、')}）` : ''}`
+    tone = 'ok'
+  }
+
+  return (
+    <div
+      className={cx(
+        'flex items-start gap-3 rounded-xl border p-3',
+        tone === 'ok' && 'border-emerald-200 bg-emerald-50/70',
+        tone === 'bad' && 'border-rose-200 bg-rose-50/70',
+        tone === 'none' && 'border-slate-200 bg-slate-50',
+      )}
+    >
+      <span
+        className={cx(
+          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+          tone === 'ok' ? 'bg-emerald-600 text-white' : tone === 'bad' ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-500',
+        )}
+      >
+        <Icon size={20} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] font-semibold tracking-wide text-slate-500">{CATEGORY_LABELS[suggestion.category]}の自動判定</div>
+        <div
+          className={cx(
+            'text-base leading-snug font-bold',
+            tone === 'ok' ? 'text-emerald-900' : tone === 'bad' ? 'text-rose-800' : 'text-slate-600',
+          )}
+        >
+          {headline}
+        </div>
+        <div className="mt-0.5 text-[11px] leading-relaxed text-slate-600 tabular-nums">{detail}</div>
+      </div>
+      {best &&
+        (best.spec.id === current ? (
+          <span className="shrink-0 rounded-md bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+            表示中
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => onSelect(best.spec.id)}
+            className={cx(
+              'inline-flex shrink-0 items-center gap-1 rounded-lg bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-300 hover:bg-emerald-100',
+              focusRing,
+            )}
+          >
+            この規格で表示 <ArrowRight size={12} />
+          </button>
+        ))}
+    </div>
+  )
+}
+
+function Meter({ label, text, ratio, note, color }: { label: string; text: string; ratio: number; note?: string; color: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold text-slate-600">{label}</span>
+        <span className="text-lg font-bold text-slate-900 tabular-nums">{pct(ratio)}</span>
+      </div>
+      <div className="mt-0.5 text-xs text-slate-600 tabular-nums">{text}</div>
+      <div
+        className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100"
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(Math.min(1, ratio) * 100)}
+      >
+        <div className={cx('h-full rounded-full transition-all', color)} style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+      </div>
+      {note && <div className="mt-1 text-[11px] text-slate-500 tabular-nums">{note}</div>}
+    </div>
+  )
+}
+
+interface Alert {
+  tone: 'error' | 'warning' | 'ok'
+  text: string
+  hint?: string
+}
+
+function buildAlerts(result: PackingResult, cargo: readonly CargoItem[], sea: CategorySuggestion, truck: CategorySuggestion): Alert[] {
+  const { spec } = result
+  const alerts: Alert[] = []
+  if (cargo.length === 0) return alerts
+  const best = spec.category === 'sea' ? sea.best : truck.best
+  const bestText =
+    best && best.spec.id !== spec.id ? `${best.spec.label}${best.units && best.units > 1 ? ` × ${best.units}${best.spec.unitJa}` : ''} なら全量を積載できます。` : undefined
+
+  const count = (reason: 'space' | 'weight' | 'door' | 'size' | 'limit') =>
+    cargo
+      .map((item, i) => ({ item, n: result.items[i]?.unplaced[reason] ?? 0 }))
+      .filter((x) => x.n > 0)
+
+  const space = count('space')
+  if (space.length) {
+    const n = space.reduce((sum, x) => sum + x.n, 0)
+    alerts.push({
+      tone: 'error',
+      text: `積みきれない貨物があります：未積載 ${n} 個（${space.map((x) => `${x.item.name} × ${x.n}`).join('、')}）`,
+      hint: bestText,
+    })
+  }
+  if (result.doorBlocked.length) {
+    const rows = result.doorBlocked.map((i) => cargo[i])
+    const hq = getContainerSpec('40hc')
+    const fitsHq = spec.category === 'sea' && rows.every((item) => item.height <= hq.doorHeight)
+    alerts.push({
+      tone: 'error',
+      text: `ドア開口高 ${mm(spec.doorHeight)} mm を超える貨物があります：${rows.map((item) => `${item.name}（高さ ${mm(item.height)} mm）`).join('、')}。この${spec.category === 'sea' ? 'コンテナ' : '車両'}には搬入できません。`,
+      hint: fitsHq && spec.id !== hq.id ? `40ft HQ（ドア開口高 ${mm(hq.doorHeight)} mm）なら搬入できます。` : undefined,
+    })
+  }
+  if (result.oversize.length) {
+    alerts.push({
+      tone: 'error',
+      text: `荷室の内寸（${dims(spec)}）に収まらない貨物があります：${result.oversize.map((i) => `${cargo[i].name}（${mm(cargo[i].length)} × ${mm(cargo[i].width)} × ${mm(cargo[i].height)} mm）`).join('、')}`,
+    })
+  }
+  if (result.overweight) {
+    const n = count('weight').reduce((sum, x) => sum + x.n, 0)
+    alerts.push({
+      tone: 'error',
+      text: `総重量オーバー：貨物の合計 ${kg(result.totalWeight)} kg が最大積載量 ${kg(spec.maxPayload)} kg を超えています${n ? `（${n} 個は重量超過のため未積載）` : ''}。`,
+      hint: bestText,
+    })
+  }
+  if (result.limitedPieces > 0) {
+    alerts.push({
+      tone: 'warning',
+      text: `計算は合計 ${MAX_PIECES.toLocaleString('en-US')} 個までです。超過分（${result.limitedPieces.toLocaleString('en-US')} 個）は計算していません。`,
+    })
+  }
+  if (!alerts.some((a) => a.tone === 'error') && result.loadedPieces === result.totalPieces - result.limitedPieces) {
+    alerts.push({
+      tone: 'ok',
+      text: `すべての貨物（${result.loadedPieces.toLocaleString('en-US')} 個）を ${spec.label} に積載できます。奥（前壁）から ${mm(result.usedLength)} mm まで使用、ドア側に ${mm(spec.length - result.usedLength)} mm の余裕があります。`,
+    })
+  }
+  return alerts
+}
+
+export function VanningPanel({ container, cargo, dispatch, today }: VanningPanelProps) {
+  const spec = getContainerSpec(container)
+  const result = useMemo(() => analyzePacking(spec, cargo), [spec, cargo])
+  const sea = useMemo(() => suggestForCategory(cargo, 'sea'), [cargo])
+  const truck = useMemo(() => suggestForCategory(cargo, 'truck'), [cargo])
+  const alerts = useMemo(() => buildAlerts(result, cargo, sea, truck), [result, cargo, sea, truck])
+  const hasCargo = cargo.length > 0
+
+  const selectContainer = (id: ContainerId) => dispatch({ type: 'setContainer', container: id })
+  const switchCategory = (category: ContainerCategory) => {
+    if (category === spec.category) return
+    const best = (category === 'sea' ? sea : truck).best
+    selectContainer(best?.spec.id ?? specsOfCategory(category)[0].id)
+  }
+
+  const snapshot: SnapshotInfo = useMemo(
+    () => ({
+      title: `${spec.nameJa}（${spec.label}）積載シミュレーション`,
+      subtitle: `内寸 ${dims(spec)} ・ ドア開口高 ${mm(spec.doorHeight)} mm ・ 最大積載 ${kg(spec.maxPayload)} kg ・ 容積 ${spec.capacity} m³`,
+      metrics: `積載 ${result.loadedPieces}/${result.totalPieces} 個 ・ 容積 ${m3(result.loadedVolume)} / ${spec.capacity} m³ (${pct(result.volumeRatio)}) ・ 重量 ${kg(result.loadedWeight)} / ${kg(spec.maxPayload)} kg (${pct(result.weightRatio)}) ・ 床面 ${pct(result.floorRatio)}`,
+      items: cargo.map((item, i) => ({
+        color: item.color,
+        text: `${item.name}  ${mm(item.length)}×${mm(item.width)}×${mm(item.height)} mm ・ ${kg(item.weight)} kg × ${item.quantity}（積載 ${result.items[i]?.loaded ?? 0}/${item.quantity}）${item.stackable ? '' : ' ・ 上積み厳禁'}`,
+      })),
+      warnings: alerts.filter((a) => a.tone !== 'ok').map((a) => a.text),
+      footer: `Global Lead-Time Planner ・ ${today} ・ 奥（前壁）からドアに向かって積み付け（自動計算の目安です。実際の積み付けは現場で確認してください）`,
+      fileName: `vanning_${spec.id}_${today}.png`,
+    }),
+    [spec, result, cargo, alerts, today],
+  )
+
+  return (
+    <div className="space-y-4">
+      <Card
+        icon={<Container size={18} />}
+        title="コンテナ・トラック積載 3Dシミュレーター（バンニング計算機）"
+        subtitle="貨物の寸法・重量・個数から、海上コンテナ／トラックへの積み付けを自動計算して 3D で表示します。"
+      >
+        <div className="space-y-4 @container">
+          <div className="flex flex-wrap items-center gap-3">
+            <Segmented
+              ariaLabel="輸送手段"
+              value={spec.category}
+              onChange={switchCategory}
+              options={[
+                { value: 'sea', label: '海上コンテナ', icon: <Ship size={15} /> },
+                { value: 'truck', label: '陸路トラック', icon: <Truck size={15} /> },
+              ]}
+            />
+            <div role="radiogroup" aria-label="コンテナ・トラックの規格" className="flex flex-wrap gap-2">
+              {specsOfCategory(spec.category).map((s) => {
+                const active = s.id === spec.id
+                const best = (s.category === 'sea' ? sea : truck).best?.spec.id === s.id && hasCargo
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => selectContainer(s.id)}
+                    className={cx(
+                      'relative rounded-xl border px-3 py-1.5 text-left transition',
+                      focusRing,
+                      active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:bg-slate-50',
+                    )}
+                  >
+                    <span className={cx('block text-sm font-semibold', active ? 'text-indigo-900' : 'text-slate-800')}>
+                      {s.label}
+                      {best && (
+                        <span className="ml-1.5 rounded bg-emerald-100 px-1 py-px align-[1px] text-[10px] font-bold text-emerald-700">
+                          推奨
+                        </span>
+                      )}
+                    </span>
+                    <span className="block text-[11px] text-slate-500 tabular-nums">
+                      {mm(s.length)}×{mm(s.width)}×{mm(s.height)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+          <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-600 tabular-nums">
+            <span className="font-semibold text-slate-800">{spec.nameJa}</span>
+            <span>内寸 {dims(spec)}</span>
+            <span>
+              ドア開口高 {mm(spec.doorHeight)} mm{spec.category === 'truck' && '（ウイング・後部ドアとも荷室高まで）'}
+            </span>
+            <span>最大積載 {kg(spec.maxPayload)} kg</span>
+            <span>容積 {spec.capacity} m³</span>
+          </p>
+
+          <div className="grid gap-3 @3xl:grid-cols-2">
+            <SuggestionCard suggestion={sea} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
+            <SuggestionCard suggestion={truck} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
+          </div>
+
+          <div className="grid gap-3 @2xl:grid-cols-3">
+            <Meter
+              label="容積消化率（m³）"
+              text={`現在 ${m3(result.loadedVolume)} m³ / ${spec.capacity} m³ (${pct(result.volumeRatio)})`}
+              ratio={result.volumeRatio}
+              note={`貨物の総容積 ${m3(result.totalVolume)} m³`}
+              color="bg-indigo-500"
+            />
+            <Meter
+              label="重量消化率（kg）"
+              text={`現在 ${kg(result.loadedWeight)} kg / ${kg(spec.maxPayload)} kg (${pct(result.weightRatio)})`}
+              ratio={result.weightRatio}
+              note={`貨物の総重量 ${kg(result.totalWeight)} kg`}
+              color={result.overweight ? 'bg-rose-500' : 'bg-sky-500'}
+            />
+            <Meter
+              label="床面積占有率（%）"
+              text={`床面 ${result.floorArea.toFixed(1)} m² / ${result.containerFloorArea.toFixed(1)} m² (${pct(result.floorRatio)})`}
+              ratio={result.floorRatio}
+              note={`奥から ${mm(result.usedLength)} mm まで使用（荷室長の ${pct0(result.usedLength / spec.length)}）`}
+              color="bg-teal-500"
+            />
+          </div>
+
+          {alerts.length > 0 && (
+            <ul className="space-y-1.5" aria-live="polite">
+              {alerts.map((alert) => (
+                <li
+                  key={alert.text}
+                  className={cx(
+                    'flex items-start gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed',
+                    alert.tone === 'error' && 'bg-rose-50 text-rose-800 ring-1 ring-rose-200',
+                    alert.tone === 'warning' && 'bg-amber-50 text-amber-900 ring-1 ring-amber-200',
+                    alert.tone === 'ok' && 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
+                  )}
+                >
+                  {alert.tone === 'ok' ? (
+                    <CircleCheck size={15} className="mt-px shrink-0" />
+                  ) : alert.tone === 'warning' ? (
+                    <Info size={15} className="mt-px shrink-0" />
+                  ) : (
+                    <AlertTriangle size={15} className="mt-px shrink-0" />
+                  )}
+                  <span>
+                    <span className={alert.tone === 'error' ? 'font-semibold' : undefined}>{alert.text}</span>
+                    {alert.hint && <span className="ml-1 text-slate-700">→ {alert.hint}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+
+      <div className="@container">
+        <div className="grid items-start gap-4 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
+          <Card icon={<Package size={18} />} title="貨物リスト" subtitle="木箱・パレット・カートン（寸法は外寸 mm）">
+            <CargoList cargo={cargo} statuses={result.items} dispatch={dispatch} />
+          </Card>
+          <Card icon={<Box size={18} />} title="3D 積載ビュー" subtitle={`${spec.nameJa}：奥（前壁）からドアに向かって積み付け`}>
+            <ViewerBoundary>
+              <Suspense fallback={<ViewerPlaceholder />}>
+                <LoadViewer3D spec={spec} placements={result.placements} items={cargo} snapshot={snapshot} />
+              </Suspense>
+            </ViewerBoundary>
+            {hasCargo && (
+              <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                {cargo.map((item, i) => {
+                  const status = result.items[i]
+                  const missing = status ? status.total - status.loaded : 0
+                  return (
+                    <li key={item.id} className="flex min-w-0 items-center gap-1.5">
+                      <span className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-slate-900/30" style={{ backgroundColor: item.color }} />
+                      <span className="max-w-48 truncate">{item.name}</span>
+                      <span className={cx('tabular-nums', missing > 0 ? 'font-semibold text-rose-600' : 'text-slate-500')}>
+                        {status?.loaded ?? 0}/{item.quantity}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  )
+}

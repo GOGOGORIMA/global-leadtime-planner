@@ -1,14 +1,28 @@
-import { Calculator, CalendarRange, Clock, Mail, type LucideIcon } from 'lucide-react'
+import { Calculator, CalendarRange, Clock, Container, Mail, type LucideIcon } from 'lucide-react'
 import { useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { PlannerTab } from '../types'
 import { cx } from './classes'
 import { tabButtonId, tabPanelId } from './tabIds'
 
-const TAB_DEFINITIONS: ReadonlyArray<{ id: PlannerTab; label: string; title: string; icon: LucideIcon }> = [
-  { id: 'meeting', label: '会議可能時間帯', title: '現在時刻と会議可能時間帯', icon: Clock },
-  { id: 'schedule', label: '納期計算', title: '納期計算（順算・逆算）', icon: Calculator },
-  { id: 'calendar', label: '稼働カレンダー＆ガント', title: '各国の稼働カレンダー＆工程ガントチャート', icon: CalendarRange },
-  { id: 'export', label: '英文メール / WhatsApp', title: '英文メール / WhatsApp 出力', icon: Mail },
+/** `shortLabel` is used while the right pane is narrower than 56rem (window ≈ 1300px). */
+const TAB_DEFINITIONS: ReadonlyArray<{ id: PlannerTab; label: string; shortLabel: string; title: string; icon: LucideIcon }> = [
+  { id: 'meeting', label: '会議可能時間帯', shortLabel: '会議可能時間帯', title: '現在時刻と会議可能時間帯', icon: Clock },
+  { id: 'schedule', label: '納期計算', shortLabel: '納期計算', title: '納期計算（順算・逆算）', icon: Calculator },
+  {
+    id: 'calendar',
+    label: '稼働カレンダー＆ガント',
+    shortLabel: 'カレンダー＆ガント',
+    title: '各国の稼働カレンダー＆工程ガントチャート',
+    icon: CalendarRange,
+  },
+  { id: 'export', label: '英文メール / WhatsApp', shortLabel: '英文出力', title: '英文メール / WhatsApp 出力', icon: Mail },
+  {
+    id: 'vanning',
+    label: '積載3Dシミュレーター',
+    shortLabel: '積載3D',
+    title: 'コンテナ・トラック積載 3Dシミュレーター（バンニング計算機）',
+    icon: Container,
+  },
 ]
 
 /** Pill-style tab navigation for the right pane (WAI-ARIA tabs pattern, arrow keys move focus). */
@@ -28,7 +42,7 @@ export function TabBar({ value, onChange }: { value: PlannerTab; onChange: (tab:
   }
 
   return (
-    // Container query: a narrower right pane (window ≈ 1000–1170px) gets slightly smaller tabs, so all four still fit.
+    // Container query: a narrower right pane (window ≈ 1000–1300px) gets short labels and smaller tabs, so all five fit.
     <div className="@container">
       <div
         ref={listRef}
@@ -37,7 +51,7 @@ export function TabBar({ value, onChange }: { value: PlannerTab; onChange: (tab:
         onKeyDown={onKeyDown}
         className="flex gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm"
       >
-        {TAB_DEFINITIONS.map(({ id, label, title, icon: Icon }) => {
+        {TAB_DEFINITIONS.map(({ id, label, shortLabel, title, icon: Icon }) => {
           const active = id === value
           return (
             <button
@@ -51,13 +65,14 @@ export function TabBar({ value, onChange }: { value: PlannerTab; onChange: (tab:
               title={title}
               onClick={() => onChange(id)}
               className={cx(
-                'flex flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-[13px] font-semibold tracking-tight whitespace-nowrap transition @3xl:gap-2 @3xl:px-3 @3xl:text-sm @3xl:tracking-normal',
+                'flex flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-[13px] font-semibold tracking-tight whitespace-nowrap transition @4xl:gap-2 @4xl:px-3 @4xl:text-sm @4xl:tracking-normal',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1',
                 active ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
               )}
             >
-              <Icon size={16} className={cx('size-3.5 shrink-0 @3xl:size-4', active ? 'text-white' : 'text-slate-400')} />
-              {label}
+              <Icon size={16} className={cx('size-3.5 shrink-0 @4xl:size-4', active ? 'text-white' : 'text-slate-400')} />
+              <span className="@4xl:hidden">{shortLabel}</span>
+              <span className="hidden @4xl:inline">{label}</span>
             </button>
           )
         })}

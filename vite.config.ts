@@ -16,9 +16,11 @@ export default defineConfig({
     rolldownOptions: {
       output: {
         // Split rarely-changing vendor code from app code so redeploys keep the big
-        // holiday-data chunk cached in browsers / CDN.
+        // holiday-data chunk cached in browsers / CDN. three.js gets its own chunk: it is only
+        // imported by the lazily loaded 3D viewer (tab ⑤), so it must not end up in `vendor`.
         codeSplitting: {
           groups: [
+            { name: 'three', test: /node_modules[\\/]three[\\/]/, priority: 3 },
             { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 2 },
             { name: 'vendor', test: /node_modules[\\/]/, priority: 1 },
           ],

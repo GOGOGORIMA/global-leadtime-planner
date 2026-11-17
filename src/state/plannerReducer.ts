@@ -1,7 +1,9 @@
+import { isContainerId, type ContainerId } from '../data/containers'
 import { isKnownCountry } from '../data/countries'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
+  type CargoItem,
   type CountrySettings,
   type DayOverride,
   type PlannerState,
@@ -10,7 +12,19 @@ import {
 } from '../types'
 import { isISODate, normalizeStepDays, type ISODate, type ScheduleMode } from '../utils/dateCalc'
 import { isValidTimeZone } from '../utils/timezone'
-import { MAX_PARTNERS, MAX_STEPS, createId, type StepDefinition } from './defaults'
+import {
+  MAX_CARGO_DIMENSION,
+  MAX_CARGO_ITEMS,
+  MAX_CARGO_QUANTITY,
+  MAX_CARGO_WEIGHT,
+  MAX_PARTNERS,
+  MAX_STEPS,
+  createId,
+  newCargoDefinition,
+  nextCargoColor,
+  type CargoDefinition,
+  type StepDefinition,
+} from './defaults'
 
 export type PlannerAction =
   | { type: 'setBase'; code: string }
@@ -31,10 +45,51 @@ export type PlannerAction =
   | { type: 'setOverrides'; country: string; dates: ISODate[]; override: DayOverride | null }
   | { type: 'clearOverrides'; country?: string }
   | { type: 'setTab'; tab: PlannerTab }
+  | { type: 'setContainer'; container: ContainerId }
+  | { type: 'addCargo'; cargo?: Partial<CargoDefinition> }
+  | { type: 'updateCargo'; id: string; patch: Partial<CargoDefinition> }
+  | { type: 'duplicateCargo'; id: string }
+  | { type: 'removeCargo'; id: string }
+  | { type: 'setCargo'; cargo: ReadonlyArray<Partial<CargoDefinition>> }
   | { type: 'replace'; state: PlannerState }
 
 const MAX_LABEL_LENGTH = 80
 const MAX_STEP_NAME_LENGTH = 80
+const MAX_CARGO_NAME_LENGTH = 60
+const HEX_COLOR = /^#[0-9a-f]{6}$/i
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const n = Math.round(Number(value))
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
+}
+
+/** Makes one cargo row safe: sizes 1–20,000 mm, weight 0–100,000 kg (0.1 kg), quantity 1–999. */
+function sanitizeCargo(item: Partial<CargoItem>, index: number, usedColors: readonly string[]): CargoItem {
+  const name = (item.name ?? '').slice(0, MAX_CARGO_NAME_LENGTH)
+  const weight = Number(item.weight)
+  return {
+    id: item.id || createId(),
+    name: name.trim() ? name : `Case #${index + 1}`,
+    length: clampInt(item.length, 1, MAX_CARGO_DIMENSION, 1000),
+    width: clampInt(item.width, 1, MAX_CARGO_DIMENSION, 1000),
+    height: clampInt(item.height, 1, MAX_CARGO_DIMENSION, 1000),
+    weight: Number.isFinite(weight) ? Math.min(MAX_CARGO_WEIGHT, Math.max(0, Math.round(weight * 10) / 10)) : 0,
+    quantity: clampInt(item.quantity, 1, MAX_CARGO_QUANTITY, 1),
+    stackable: item.stackable !== false,
+    rotatable: item.rotatable !== false,
+    color: typeof item.color === 'string' && HEX_COLOR.test(item.color) ? item.color.toLowerCase() : nextCargoColor(usedColors),
+  }
+}
+
+/** Sanitizes a cargo list (max 30 rows); rows without a valid color get distinct palette colors. */
+export function sanitizeCargoList(items: ReadonlyArray<Partial<CargoItem>>): CargoItem[] {
+  const colors: string[] = []
+  return items.slice(0, MAX_CARGO_ITEMS).map((item, index) => {
+    const clean = sanitizeCargo(item, index, colors)
+    colors.push(clean.color)
+    return clean
+  })
+}
 
 function selectedCodes(state: Pick<PlannerState, 'base' | 'partners'>): Set<string> {
   return new Set([state.base, ...state.partners])
@@ -128,6 +183,8 @@ export function sanitizeState(input: PlannerState, fallback: PlannerState): Plan
     steps,
     overrides,
     tab: isPlannerTab(input.tab) ? input.tab : fallback.tab,
+    container: isContainerId(input.container) ? input.container : fallback.container,
+    cargo: sanitizeCargoList(input.cargo ?? fallback.cargo),
   }
 }
 
@@ -273,6 +330,40 @@ export function plannerReducer(state: PlannerState, action: PlannerAction): Plan
     }
     case 'setTab':
       return isPlannerTab(action.tab) && action.tab !== state.tab ? { ...state, tab: action.tab } : state
+    case 'setContainer':
+      return isContainerId(action.container) && action.container !== state.container
+        ? { ...state, container: action.container }
+        : state
+    case 'addCargo': {
+      if (state.cargo.length >= MAX_CARGO_ITEMS) return state
+      const colors = state.cargo.map((c) => c.color)
+      const definition = { ...newCargoDefinition(state.cargo.length, nextCargoColor(colors)), ...action.cargo }
+      return { ...state, cargo: [...state.cargo, sanitizeCargo(definition, state.cargo.length, colors)] }
+    }
+    case 'updateCargo': {
+      const index = state.cargo.findIndex((c) => c.id === action.id)
+      if (index < 0) return state
+      const current = state.cargo[index]
+      const next = sanitizeCargo({ ...current, ...action.patch, id: current.id }, index, [])
+      // Keep the name exactly as typed (an empty field must stay empty while editing).
+      next.name = (action.patch.name ?? current.name).slice(0, MAX_CARGO_NAME_LENGTH)
+      const cargo = [...state.cargo]
+      cargo[index] = next
+      return { ...state, cargo }
+    }
+    case 'duplicateCargo': {
+      if (state.cargo.length >= MAX_CARGO_ITEMS) return state
+      const index = state.cargo.findIndex((c) => c.id === action.id)
+      if (index < 0) return state
+      const copy = { ...state.cargo[index], id: createId(), color: nextCargoColor(state.cargo.map((c) => c.color)) }
+      const cargo = [...state.cargo]
+      cargo.splice(index + 1, 0, copy)
+      return { ...state, cargo }
+    }
+    case 'removeCargo':
+      return { ...state, cargo: state.cargo.filter((c) => c.id !== action.id) }
+    case 'setCargo':
+      return { ...state, cargo: sanitizeCargoList(action.cargo) }
     case 'replace':
       return action.state
     default:
