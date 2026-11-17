@@ -113,3 +113,57 @@ describe('country catalog', () => {
     expect(getDayStatus('2026-11-21', buildCountryCalendar(saturdayShift, undefined))).toBe('working')
   })
 })
+
+describe('holiday corrections — UAE (Cabinet Resolution No. 27 of 2024)', () => {
+  const blocking = (date: string) => isBlockingHoliday('AE', undefined, date)
+  const names = (date: string) => getHolidaysOn('AE', undefined, date).map((h) => h.name)
+
+  it('keeps Isra & Miʿraj and the first day of Ramadan as information only', () => {
+    expect(blocking('2026-01-16')).toBe(false)
+    expect(getHolidaysOn('AE', undefined, '2026-01-16')[0]).toMatchObject({
+      name: 'Laylat al-Miʿraj',
+      type: 'observance',
+      corrected: true,
+    })
+    expect(blocking('2026-02-18')).toBe(false)
+    expect(names('2026-02-18')).toEqual(['First day of Ramadan'])
+  })
+
+  it('adds 30 Ramadan to Eid al-Fitr only when Ramadan has 30 days', () => {
+    // 2026: 30-day Ramadan → 19–22 March, as announced for the federal government.
+    expect(['2026-03-18', '2026-03-19', '2026-03-20', '2026-03-21', '2026-03-22', '2026-03-23'].map(blocking)).toEqual([
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+    ])
+    expect(getHolidaysOn('AE', undefined, '2026-03-19')[0]).toMatchObject({
+      name: 'Eid al-Fitr holiday (30 Ramadan)',
+      localName: 'عطلة عيد الفطر (30 رمضان)',
+      corrected: true,
+    })
+    // 2027: 29-day Ramadan → no extra day and no duplicate entry on 1 Shawwal.
+    expect(blocking('2027-03-08')).toBe(false)
+    expect(names('2027-03-09')).toEqual(['End of Ramadan (Eid al-Fitr)'])
+  })
+
+  it('adds Arafat Day and the second day of National Day; Commemoration Day is a working day', () => {
+    expect(getHolidaysOn('AE', undefined, '2026-05-26')[0]).toMatchObject({
+      name: 'Arafat Day',
+      localName: 'يوم عرفة',
+      blocking: true,
+      corrected: true,
+    })
+    expect(['2026-05-27', '2026-05-28', '2026-05-29'].map(blocking)).toEqual([true, true, true])
+    expect(['2026-12-01', '2026-12-02', '2026-12-03', '2026-12-04'].map(blocking)).toEqual([false, true, true, false])
+    expect(names('2026-12-03')).toEqual(['National Day'])
+  })
+
+  it('does not touch other countries', () => {
+    expect(getHolidaysOn('BH', undefined, '2026-05-26')[0]).toMatchObject({ name: 'Arafat Day', corrected: false })
+    expect(getHolidaysInRange('SA', undefined, '2026-01-01', '2026-12-31').every((h) => !h.corrected)).toBe(true)
+    expect(getHolidaysOn('JP', undefined, '2026-11-23')[0].corrected).toBe(false)
+  })
+})

@@ -8,6 +8,7 @@ import {
   getRegionOptions,
   getTimeZoneOptions,
 } from '../data/countries'
+import { getHolidayCorrection } from '../data/holidayCorrections'
 import type { CountrySettings } from '../types'
 import type { ResolvedCountry } from '../utils/calendars'
 import { WEEKDAYS_JA, formatWeekendJa } from '../utils/dateFormat'
@@ -39,6 +40,7 @@ export function CountrySettingsModal({ country, settings, now, onChange, onReset
   const defaultTimeZone = getDefaultTimeZone(country.code, country.region)
   const defaultWeekend = getDefaultWeekend(country.code, country.region)
   const hasCustom = !!settings && Object.keys(settings).length > 0
+  const correction = getHolidayCorrection(country.code)
 
   const toggleWeekday = (day: number) => {
     const next = country.weekend.includes(day) ? country.weekend.filter((d) => d !== day) : [...country.weekend, day]
@@ -187,10 +189,22 @@ export function CountrySettingsModal({ country, settings, now, onChange, onReset
         <div className="flex gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
           <Info size={16} className="mt-0.5 shrink-0 text-slate-400" />
           {country.info.hasHolidayData ? (
-            <p>
-              祝日は <strong>date-holidays</strong> のデータから自動判定します（公休日・銀行休業日を休業扱い。半日休や記念日は参考表示のみ）。
-              旧正月の延長休暇や工場の長期休暇は、タイムラインの日付クリックで「カスタム休日」として追加できます。
-            </p>
+            <div className="space-y-1.5">
+              <p>
+                祝日は <strong>date-holidays</strong> のデータから自動判定します（公休日・銀行休業日を休業扱い。半日休や記念日は参考表示のみ）。
+                旧正月の延長休暇や工場の長期休暇は、タイムラインの日付クリックで「カスタム休日」として追加できます。
+              </p>
+              {correction && (
+                <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-amber-900 ring-1 ring-amber-200">
+                  <strong>補正あり：</strong>
+                  {correction.note}（出典:{' '}
+                  <a className="underline" href={correction.sourceUrl} target="_blank" rel="noreferrer">
+                    {correction.source}
+                  </a>
+                  ）。年ごとの振替（週の始め・終わりへの移動）は公式発表に合わせてカスタム休日／臨時稼働日で調整してください。
+                </p>
+              )}
+            </div>
           ) : (
             <p>
               この国の祝日データはありません。週末のみで計算されるため、祝日はタイムラインの日付クリックまたは「期間で追加」から

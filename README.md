@@ -74,4 +74,5 @@ Node.js `^20.19.0 || >=22.12.0` が必要です（CI は Node 20）。
 ## 注意
 
 - 祝日データは [date-holidays](https://github.com/commenthol/date-holidays)（データ: CC BY-SA 4.0）に基づく参考情報です。重要な日程は現地にご確認ください。
+- UAE の祝日は、公式一覧（[閣議決定 2024 年第 27 号 / u.ae](https://u.ae/en/information-and-services/public-holidays-and-religious-affairs/public-holidays)）に合わせてアプリ側で補正しています（ツールチップに「補正」と表示）。年ごとの振替は公式発表に合わせてカスタム休日で調整してください。
 - 宛名・署名などの出力設定はブラウザ内（LocalStorage）にのみ保存され、共有 URL には含まれません。

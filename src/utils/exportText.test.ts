@@ -105,3 +105,24 @@ describe('English export text', () => {
     expect(text).not.toContain('PUBLIC HOLIDAYS')
   })
 })
+
+describe('UAE schedule with corrected holidays', () => {
+  it('skips the two-day National Day but not Commemoration Day or Fridays', () => {
+    const countries = [resolveCountry('JP', undefined, true), resolveCountry('AE', undefined)]
+    const calendars = buildCalendarMap(countries, {})
+    const steps: Step[] = [{ id: 'd', name: 'Local Delivery', days: 3, calendar: 'AE' }]
+    const schedule = computeSchedule({
+      mode: 'forward',
+      anchor: '2026-12-01',
+      steps,
+      resolveCalendar: makeCalendarResolver(calendars, 'JP'),
+    })
+    if (!schedule.ok) throw new Error(schedule.error)
+    // Tue 1 Dec (working) → Wed/Thu National Day skipped → Fri 4 Dec (working) → weekend → Mon 7 Dec
+    expect([schedule.start, schedule.end]).toEqual(['2026-12-01', '2026-12-07'])
+    const report = buildScheduleReport({ schedule, countries, calendars, overrides: {}, holidayScope: 'relevant' })
+    const text = renderEmail(report, options())
+    expect(text).toContain('Excludes: Wed, 2 Dec 2026 – National Day; Thu, 3 Dec 2026 – National Day')
+    expect(text).toContain('United Arab Emirates:\n- Wed, 2 Dec 2026 – Thu, 3 Dec 2026: National Day')
+  })
+})
