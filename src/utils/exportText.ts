@@ -5,9 +5,10 @@
 import { yearOf, type ISODate } from './dateCalc'
 import { formatEnglishDate, formatEnglishRange, type EnglishDateStyle } from './dateFormat'
 import type { ReportCountry, ReportHoliday, ReportStep, ScheduleReport } from './report'
-import { formatInstantClock } from './timezone'
+import { formatInstantClock, getTimeZoneAbbreviation } from './timezone'
 
-export type ExportFormat = 'email' | 'whatsapp'
+/** Standard e-mail, WhatsApp / chat snippet, or a meeting proposal built from the business-hour overlap. */
+export type ExportFormat = 'email' | 'whatsapp' | 'meeting'
 
 export interface ExportOptions {
   format: ExportFormat
@@ -41,6 +42,8 @@ export interface MeetingSuggestion {
   /** Other participants (usually the recipient's country). */
   others: ReportCountry[]
   days: Array<{ date: ISODate; intervals: Array<{ start: number; end: number }> }>
+  /** Local business hours per country code, e.g. `09:00–18:00` (used when nothing overlaps). */
+  businessHours?: Record<string, string>
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -55,13 +58,15 @@ function holidayLabel(name: string, localName: string | undefined, includeLocal:
   return includeLocal && localName ? `${name} (${localName})` : name
 }
 
+/** `11:00–18:00 JST / 21:00–04:00 EST`; the abbreviation follows each slot's own date (DST changes within the scan). */
 function formatSlot(
   interval: { start: number; end: number },
   countries: readonly ReportCountry[],
 ): string {
   return countries
     .map(
-      (c) => `${formatInstantClock(interval.start, c.timeZone)}–${formatInstantClock(interval.end, c.timeZone)} ${c.timeZoneAbbr}`,
+      (c) =>
+        `${formatInstantClock(interval.start, c.timeZone)}–${formatInstantClock(interval.end, c.timeZone)} ${getTimeZoneAbbreviation(c.timeZone, interval.start)}`,
     )
     .join(' / ')
 }
@@ -241,6 +246,61 @@ export function renderWhatsApp(report: ScheduleReport, options: ExportOptions, m
   return lines.join('\n')
 }
 
+/** Meeting request e-mail proposing the next times when both sides are within business hours. */
+export function renderMeetingProposal(
+  options: ExportOptions,
+  meeting: MeetingSuggestion,
+  report?: ScheduleReport | null,
+): string {
+  const style = options.dateStyle
+  const d = (date: ISODate) => formatEnglishDate(date, style)
+  const participants = [meeting.base, ...meeting.others]
+  const lines: string[] = []
+  lines.push(`Subject: Meeting Request – Proposed Times${referenceSuffix(options)}`)
+  lines.push('')
+  lines.push(`Dear ${options.recipientName.trim() || 'Sir or Madam'},`)
+  lines.push('')
+
+  if (meeting.days.length > 0) {
+    lines.push(
+      'I hope this message finds you well. We would like to arrange an online meeting to discuss the schedule. Taking our respective business hours into account, the following times would work on both sides:',
+    )
+    lines.push('')
+    meeting.days.forEach((day, i) => {
+      lines.push(`${i + 1}. ${d(day.date)}: ${day.intervals.map((interval) => formatSlot(interval, participants)).join(', ')}`)
+    })
+    lines.push('')
+    lines.push(
+      'Any 30–60 minute slot within these windows would suit us. Please let us know which time works best for you, or feel free to suggest an alternative.',
+    )
+  } else {
+    const hours = participants
+      .map((c) => `${c.nameEn}: ${meeting.businessHours?.[c.code] ?? '09:00–18:00'} ${c.timeZoneAbbr}`)
+      .join(', ')
+    lines.push(
+      `I hope this message finds you well. We would like to arrange an online meeting to discuss the schedule. As our business hours do not overlap (${hours}), we would be happy to join a call outside our regular office hours. Please let us know a time that is convenient for you.`,
+    )
+  }
+
+  if (report && report.steps.length > 0) {
+    lines.push('')
+    lines.push(
+      report.mode === 'backward'
+        ? `For reference, to meet your requested delivery date of ${d(report.anchor)}, the order would need to be confirmed by ${d(report.orderDeadline)} (${report.base.nameEn} time).`
+        : `For reference, our current plan targets delivery on ${d(report.end)}.`,
+    )
+  }
+
+  lines.push('')
+  lines.push('We look forward to speaking with you.')
+  lines.push('')
+  lines.push('Best regards,')
+  if (options.senderName.trim()) lines.push(options.senderName.trim())
+  if (options.companyName.trim()) lines.push(options.companyName.trim())
+  return lines.join('\n')
+}
+
 export function renderExport(report: ScheduleReport, options: ExportOptions, meeting?: MeetingSuggestion): string {
+  if (options.format === 'meeting' && meeting) return renderMeetingProposal(options, meeting, report)
   return options.format === 'whatsapp' ? renderWhatsApp(report, options, meeting) : renderEmail(report, options, meeting)
 }

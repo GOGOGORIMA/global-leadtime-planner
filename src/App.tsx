@@ -5,11 +5,13 @@ import { CountrySettingsModal } from './components/CountrySettingsModal'
 import { ExportPanel } from './components/ExportPanel'
 import { MeetingPlanner } from './components/MeetingPlanner'
 import { SchedulePanel } from './components/SchedulePanel'
+import { tabButtonId, tabPanelId } from './components/tabIds'
+import { TabBar } from './components/TabBar'
 import { Timeline } from './components/Timeline'
 import { useNow } from './hooks/useNow'
 import { createFreshState, usePlanner } from './hooks/usePlanner'
 import { useStoredState } from './hooks/useStoredState'
-import { CALENDAR_DAYS, type CountrySettings, type PlannerState } from './types'
+import { CALENDAR_DAYS, type CountrySettings, type PlannerState, type PlannerTab } from './types'
 import { buildCalendarMap, makeCalendarResolver, resolveSelectedCountries } from './utils/calendars'
 import { computeSchedule, type ISODate } from './utils/dateCalc'
 import { DEFAULT_EXPORT_OPTIONS } from './utils/exportText'
@@ -35,7 +37,7 @@ export default function App() {
   const [meetingDate, setMeetingDate] = useState<ISODate | null>(null)
   const [exportOptions, setExportOptions] = useStoredState(STORAGE_KEYS.exportOptions, DEFAULT_EXPORT_OPTIONS)
 
-  const { base: baseCode, partners, settings, overrides, mode, anchor, steps } = state
+  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab } = state
   const countries = useMemo(
     () => resolveSelectedCountries({ base: baseCode, partners, settings }),
     [baseCode, partners, settings],
@@ -65,16 +67,18 @@ export default function App() {
     [schedule, countries, calendars, overrides, exportOptions.holidayScope, recipientCountry],
   )
 
+  const setTab = useCallback((next: PlannerTab) => dispatch({ type: 'setTab', tab: next }), [dispatch])
+  // Loading a preset or resetting replaces the plan but keeps the tab the user is looking at.
   const loadQuery = useCallback(
-    (q: string) => dispatch({ type: 'replace', state: parseState(q, createFreshState()).state }),
-    [dispatch],
+    (q: string) => dispatch({ type: 'replace', state: { ...parseState(q, createFreshState()).state, tab } }),
+    [dispatch, tab],
   )
   const reset = useCallback(() => {
     if (window.confirm('国・工程・カスタム休日を初期状態に戻しますか？（保存済みプリセットは残ります）')) {
-      dispatch({ type: 'replace', state: createFreshState() })
+      dispatch({ type: 'replace', state: { ...createFreshState(), tab } })
       setMeetingDate(null)
     }
-  }, [dispatch])
+  }, [dispatch, tab])
 
   const settingsCountry = settingsFor ? (countries.find((c) => c.code === settingsFor) ?? null) : null
   const updateSettings = useCallback(
@@ -85,75 +89,90 @@ export default function App() {
   )
 
   return (
-    <div className="flex min-h-screen flex-col">
+    // Desktop tool: the two panes always stay side by side; narrower windows scroll horizontally.
+    <div className="flex min-h-screen min-w-[1000px] flex-col">
       <AppHeader query={query} onLoadQuery={loadQuery} onReset={reset} />
 
-      <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 px-4 py-6 sm:px-6">
-        {/* Top: country list (340px) | current time & meeting window (rest) — side by side from 1024px */}
-        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[340px_1fr]">
-          <div className="min-w-0">
-            <CountryPanel countries={countries} dispatch={dispatch} onOpenSettings={setSettingsFor} now={now} />
+      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-row items-start gap-6 px-6 py-5">
+        {/* Left pane: countries & business hours, always visible */}
+        <aside
+          aria-label="対象国と営業時間"
+          className="sticky top-5 max-h-[calc(100vh-2.5rem)] w-[330px] min-w-[330px] shrink-0 overflow-y-auto rounded-xl"
+        >
+          <CountryPanel countries={countries} dispatch={dispatch} onOpenSettings={setSettingsFor} now={now} />
+        </aside>
+
+        {/* Right pane: tab bar + the selected tab only */}
+        <div className="min-w-0 flex-1">
+          <TabBar value={tab} onChange={setTab} />
+          <div role="tabpanel" id={tabPanelId(tab)} aria-labelledby={tabButtonId(tab)} className="mt-4">
+            {tab === 'meeting' && (
+              <MeetingPlanner
+                countries={countries}
+                calendars={calendars}
+                date={meetingDate ?? today}
+                today={today}
+                onDateChange={setMeetingDate}
+              />
+            )}
+            {tab === 'schedule' && (
+              <SchedulePanel
+                state={state}
+                dispatch={dispatch}
+                countries={countries}
+                schedule={schedule}
+                report={report}
+                today={today}
+                onShowGantt={() => setTab('calendar')}
+              />
+            )}
+            {tab === 'calendar' && (
+              <Timeline
+                countries={countries}
+                calendars={calendars}
+                overrides={overrides}
+                schedule={schedule}
+                mode={mode}
+                anchor={anchor}
+                today={today}
+                orderDeadline={report?.orderDeadline}
+                dispatch={dispatch}
+              />
+            )}
+            {tab === 'export' && (
+              <ExportPanel
+                report={report}
+                countries={countries}
+                calendars={calendars}
+                recipientCountry={recipientCountry}
+                today={today}
+                meetingDate={meetingDate}
+                options={exportOptions}
+                onOptionsChange={setExportOptions}
+                onShowMeeting={() => setTab('meeting')}
+              />
+            )}
           </div>
-          <div className="min-w-0">
-            <MeetingPlanner
-              countries={countries}
-              calendars={calendars}
-              date={meetingDate ?? today}
-              today={today}
-              onDateChange={setMeetingDate}
-            />
-          </div>
+
+          {/* Inside the right column so the sticky left pane is never pushed up at the end of the page. */}
+          <footer className="mt-8 space-y-1 border-t border-slate-200 pt-4 text-[11px] leading-relaxed text-slate-500">
+            <p>
+              祝日データ:{' '}
+              <a
+                className="underline decoration-slate-300 hover:text-slate-700"
+                href="https://github.com/commenthol/date-holidays"
+                target="_blank"
+                rel="noreferrer"
+              >
+                date-holidays
+              </a>
+              （データ CC BY-SA 4.0）／ タイムゾーン: ブラウザ標準 Intl（IANA）／ 国旗: flagcdn.com（取得できない場合は同梱の
+              flag-icons）。祝日・休業日は変更される場合があります。重要な日程は現地にご確認ください。
+            </p>
+            <p>計算はすべてブラウザ内で完結し、入力内容が外部に送信されることはありません。</p>
+          </footer>
         </div>
-
-        <SchedulePanel
-          state={state}
-          dispatch={dispatch}
-          countries={countries}
-          schedule={schedule}
-          report={report}
-          today={today}
-        />
-
-        <Timeline
-          countries={countries}
-          calendars={calendars}
-          overrides={overrides}
-          schedule={schedule}
-          mode={mode}
-          anchor={anchor}
-          today={today}
-          orderDeadline={report?.orderDeadline}
-          dispatch={dispatch}
-        />
-
-        <ExportPanel
-          report={report}
-          countries={countries}
-          calendars={calendars}
-          recipientCountry={recipientCountry}
-          today={today}
-          options={exportOptions}
-          onOptionsChange={setExportOptions}
-        />
       </main>
-
-      <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap justify-between gap-x-6 gap-y-1 px-4 py-4 text-[11px] leading-relaxed text-slate-500 sm:px-6">
-          <p>
-            祝日データ:{' '}
-            <a
-              className="underline decoration-slate-300 hover:text-slate-700"
-              href="https://github.com/commenthol/date-holidays"
-              target="_blank"
-              rel="noreferrer"
-            >
-              date-holidays
-            </a>
-            （データ CC BY-SA 4.0）／ タイムゾーン: ブラウザ標準 Intl（IANA）。祝日・休業日は変更される場合があります。重要な日程は現地にご確認ください。
-          </p>
-          <p>計算はすべてブラウザ内で完結し、入力内容が外部に送信されることはありません。</p>
-        </div>
-      </footer>
 
       <CountrySettingsModal
         country={settingsCountry}

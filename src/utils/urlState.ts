@@ -12,8 +12,17 @@
  *   &rg=MY:10                                ← holiday region (state / province)
  *   &off=TH:2027-02-16..2027-02-18:Chinese+New+Year   ← custom days off (range + optional label)
  *   &work=JP:2026-12-26                      ← custom working days
+ *   &tab=calendar                            ← open tab (meeting | schedule | calendar | export)
  */
-import { CALENDAR_DAYS, type CountrySettings, type DayOverride, type PlannerState, type Step } from '../types'
+import {
+  CALENDAR_DAYS,
+  isPlannerTab,
+  type CountrySettings,
+  type DayOverride,
+  type PlannerState,
+  type PlannerTab,
+  type Step,
+} from '../types'
 import { groupOverrideRanges } from './calendars'
 import { addDays, diffDays, isISODate, type ISODate, type OverrideKind } from './dateCalc'
 import { formatClock } from './timezone'
@@ -71,7 +80,14 @@ export function serializeState(state: PlannerState): string {
       params.append(range.kind, `${code}:${dates}${range.label ? `:${range.label}` : ''}`)
     }
   }
+  params.set('tab', state.tab)
   return params.toString()
+}
+
+/** The `tab` parameter alone (a link may open a tab without carrying planner state). */
+export function readTabParam(search: string): PlannerTab | undefined {
+  const tab = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search).get('tab')
+  return isPlannerTab(tab) ? tab : undefined
 }
 
 /** Splits `CODE:rest` → `[CODE, rest]` (only the first colon). */
@@ -178,7 +194,7 @@ export function parseState(search: string, fallback: PlannerState): ParsedUrlSta
   }
 
   const state = sanitizeState(
-    { base, partners, settings, mode, anchor, steps: steps as Step[], overrides },
+    { base, partners, settings, mode, anchor, steps: steps as Step[], overrides, tab: readTabParam(search) ?? fallback.tab },
     fallback,
   )
   return { recognized: true, state }

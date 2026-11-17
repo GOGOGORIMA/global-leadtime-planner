@@ -11,7 +11,6 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { getHolidayCorrection } from '../data/holidayCorrections'
-import { useMediaQuery } from '../hooks/useMediaQuery'
 import type { PlannerAction } from '../state/plannerReducer'
 import { CALENDAR_DAYS, type OverrideMap } from '../types'
 import { getDayInfo, type DayInfo, type ResolvedCountry } from '../utils/calendars'
@@ -40,9 +39,8 @@ import { Card } from './ui'
 
 /** One day = one 28px column (`w-7`). Cells are 26px wide with a 1px margin on each side. */
 const CELL_W = 28
-/** Sticky label column (`w-[210px]`); narrower on phones. */
+/** Sticky label column (`w-[210px]`). */
 const LABEL_W = 210
-const LABEL_W_COMPACT = 112
 const MAX_DAYS = 550
 
 interface TimelineProps {
@@ -88,8 +86,6 @@ interface GridProps {
   markers: Marker[]
   baseWeekend: readonly number[]
   todayIndex: number
-  /** Phones: slimmer sticky label column. */
-  compact: boolean
   /** Roving tabindex: the only day cell reachable with Tab (arrow keys move it). */
   activeRow: number
   activeCol: number
@@ -112,11 +108,10 @@ const TimelineGrid = memo(function TimelineGrid({
   markers,
   baseWeekend,
   todayIndex,
-  compact,
   activeRow,
   activeCol,
 }: GridProps) {
-  const labelW = compact ? LABEL_W_COMPACT : LABEL_W
+  const labelW = LABEL_W
   const width = labelW + days.length * CELL_W
   const labelStyle = { width: labelW, minWidth: labelW }
   const center = (index: number) => labelW + index * CELL_W + CELL_W / 2
@@ -204,7 +199,7 @@ const TimelineGrid = memo(function TimelineGrid({
           <div className={LABEL_CELL} style={labelStyle}>
             <CountryFlag code={row.country.code} />
             <span className="truncate text-xs font-medium text-slate-700">{row.country.info.nameJa}</span>
-            {row.country.isBase && !compact && (
+            {row.country.isBase && (
               <span className="shrink-0 rounded bg-indigo-50 px-1 text-[9px] font-semibold text-indigo-600">基準</span>
             )}
           </div>
@@ -238,7 +233,7 @@ const TimelineGrid = memo(function TimelineGrid({
         <div className={cx(LABEL_CELL, 'text-[11px] font-semibold text-slate-500')} style={labelStyle}>
           <span className="truncate">
             工程
-            {!compact && <span className="text-[10px] font-normal">（ストライプ＝休業日でスキップ）</span>}
+            <span className="text-[10px] font-normal">（ストライプ＝休業日でスキップ）</span>
           </span>
         </div>
       </div>
@@ -255,8 +250,9 @@ const TimelineGrid = memo(function TimelineGrid({
               </span>
             </div>
             <div className="relative h-full shrink-0" style={{ width: days.length * CELL_W }}>
+              {/* z-[6]: above the marker lines (z-[5]) so they never cross the bar label; below the sticky labels (z-10). */}
               <div
-                className={cx('absolute top-1 h-6 overflow-hidden rounded', color.solid)}
+                className={cx('absolute top-1 z-[6] h-6 overflow-hidden rounded', color.solid)}
                 style={{ left: barLeft, width: barWidth }}
                 title={`${row.name}: ${row.days}日 (${row.calendarLabel})`}
               >
@@ -368,7 +364,6 @@ export function Timeline({
   const [extraBefore, setExtraBefore] = useState(0)
   const [extraAfter, setExtraAfter] = useState(0)
   const [hover, setHover] = useState<{ r: number; c: number; x: number; y: number } | null>(null)
-  const compact = !useMediaQuery('(min-width: 640px)')
 
   const hasSteps = schedule.ok && schedule.steps.length > 0
   const coreStart = hasSteps ? minISODate(schedule.start, anchor) : anchor
@@ -592,7 +587,6 @@ export function Timeline({
           markers={markers}
           baseWeekend={base.weekend}
           todayIndex={todayIndex >= 0 && todayIndex < days.length ? todayIndex : -1}
-          compact={compact}
           activeRow={activeRow}
           activeCol={activeCol}
         />

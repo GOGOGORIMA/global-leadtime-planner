@@ -5,23 +5,22 @@ import { plannerReducer } from '../state/plannerReducer'
 import type { PlannerState } from '../types'
 import { loadLastQuery, saveLastQuery } from '../utils/storage'
 import { todayInTimeZone } from '../utils/timezone'
-import { parseState, serializeState } from '../utils/urlState'
+import { parseState, readTabParam, serializeState } from '../utils/urlState'
 
 export function createFreshState(): PlannerState {
   return createDefaultState(todayInTimeZone(getDefaultTimeZone(DEFAULT_BASE_COUNTRY)))
 }
 
-/** URL query → last session (LocalStorage) → defaults. */
+/** URL query → last session (LocalStorage) → defaults. A URL with only `?tab=` opens that tab on top. */
 function getInitialState(): PlannerState {
   const fallback = createFreshState()
   const fromUrl = parseState(window.location.search, fallback)
   if (fromUrl.recognized) return fromUrl.state
+  const tab = readTabParam(window.location.search)
   const last = loadLastQuery()
-  if (last) {
-    const restored = parseState(last, fallback)
-    if (restored.recognized) return restored.state
-  }
-  return fallback
+  const restored = last ? parseState(last, fallback) : undefined
+  const state = restored?.recognized ? restored.state : fallback
+  return tab ? { ...state, tab } : state
 }
 
 /**

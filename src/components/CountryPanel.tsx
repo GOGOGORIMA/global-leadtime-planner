@@ -1,5 +1,5 @@
 import { Check, Globe, Plus, Search, Settings2, X } from 'lucide-react'
-import { useId, useMemo, useState, type Dispatch } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch } from 'react'
 import { DEFAULT_WORK_END, DEFAULT_WORK_START, PRESET_PARTNER_COUNTRIES, getCountryCatalog, getCountryInfo, getDefaultWeekend } from '../data/countries'
 import type { PlannerAction } from '../state/plannerReducer'
 import type { ResolvedCountry } from '../utils/calendars'
@@ -94,6 +94,38 @@ function CountrySearch({ selected, onAdd }: { selected: ReadonlySet<string>; onA
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const listId = useId()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [listStyle, setListStyle] = useState<CSSProperties | null>(null)
+
+  // The list is position:fixed so the scrollable left pane cannot clip it; it opens upwards when
+  // there is not enough room below and follows the input while the pane / window scrolls.
+  const place = useCallback(() => {
+    const rect = inputRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const below = window.innerHeight - rect.bottom - 8
+    const above = rect.top - 8
+    const openUp = below < 240 && above > below
+    setListStyle({
+      left: rect.left,
+      width: rect.width,
+      maxHeight: Math.max(160, Math.min(288, openUp ? above : below)),
+      ...(openUp ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (open) place()
+  }, [open, place])
+
+  useEffect(() => {
+    if (!open) return
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', place, true)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.removeEventListener('scroll', place, true)
+    }
+  }, [open, place])
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -116,6 +148,7 @@ function CountrySearch({ selected, onAdd }: { selected: ReadonlySet<string>; onA
     <div className="relative">
       <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-400" />
       <input
+        ref={inputRef}
         type="text"
         role="combobox"
         aria-expanded={open}
@@ -149,11 +182,12 @@ function CountrySearch({ selected, onAdd }: { selected: ReadonlySet<string>; onA
           }
         }}
       />
-      {open && results.length > 0 && (
+      {open && listStyle && results.length > 0 && (
         <ul
           id={listId}
           role="listbox"
-          className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+          style={listStyle}
+          className="fixed z-50 overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
         >
           {results.map((c, i) => {
             const isSelected = selected.has(c.code)
@@ -245,7 +279,7 @@ export function CountryPanel({ countries, dispatch, onOpenSettings, now }: Count
               比較対象国がありません。下のプリセットか検索から追加してください。
             </p>
           ) : (
-            <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            <ul className="grid gap-2">
               {partners.map((country) => (
                 <CountryChip
                   key={country.code}

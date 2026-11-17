@@ -139,8 +139,8 @@ export function AppHeader({ query, onLoadQuery, onReset }: AppHeaderProps) {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex max-w-[1440px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
+    <header className="border-b border-slate-200 bg-white">
+      <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-6 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-indigo-600 to-sky-500 text-white shadow-md">
             <Globe size={22} />
