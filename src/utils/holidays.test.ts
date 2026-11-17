@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { getCountryCatalog, getCountryInfo, getDefaultTimeZone, getDefaultWeekend, getTimeZoneOptions } from '../data/countries'
+import {
+  DEFAULT_BASE_COUNTRY,
+  PRESET_PARTNER_COUNTRIES,
+  getCountryCatalog,
+  getCountryInfo,
+  getDefaultTimeZone,
+  getDefaultWeekend,
+  getTimeZoneOptions,
+} from '../data/countries'
 import { buildCountryCalendar, resolveCountry } from './calendars'
 import { getDayStatus } from './dateCalc'
 import { getHolidayRegions, getHolidaysInRange, getHolidaysOn, getLocalHolidayLanguage, isBlockingHoliday } from './holidays'
@@ -57,7 +65,9 @@ describe('country catalog', () => {
   it('contains the preset countries with names and flags', () => {
     const catalog = getCountryCatalog()
     expect(catalog.length).toBeGreaterThan(200)
-    for (const code of ['JP', 'KR', 'TH', 'MY', 'VN', 'ID', 'KE', 'ZA', 'NG', 'US', 'DE']) {
+    expect(DEFAULT_BASE_COUNTRY).toBe('JP')
+    expect([...PRESET_PARTNER_COUNTRIES]).toEqual(['KR', 'TH', 'MY', 'VN', 'ID', 'KE', 'ZA', 'NG', 'US', 'DE', 'AE'])
+    for (const code of [DEFAULT_BASE_COUNTRY, ...PRESET_PARTNER_COUNTRIES]) {
       const info = getCountryInfo(code)
       expect(info.hasHolidayData).toBe(true)
       expect(info.nameEn).not.toBe(code)
@@ -65,6 +75,21 @@ describe('country catalog', () => {
     }
     expect(getCountryInfo('KR').nameJa).toBe('韓国')
     expect(getCountryInfo('US').nameEn).toBe('United States')
+    expect(getCountryInfo('AE').nameEn).toBe('United Arab Emirates')
+  })
+
+  it('models the UAE: Sat–Sun weekend (since 2022), Gulf time and multi-day Eid', () => {
+    const ae = resolveCountry('AE', undefined)
+    expect(ae.timeZone).toBe('Asia/Dubai')
+    expect(ae.weekend).toEqual([0, 6])
+    const calendar = buildCountryCalendar(ae, undefined)
+    expect(getDayStatus('2026-11-20', calendar)).toBe('working') // Friday is a working day
+    expect(getDayStatus('2026-11-21', calendar)).toBe('weekend')
+    // Eid al-Fitr 2026: three days from 20 March (date-holidays' calculated dates)
+    for (const date of ['2026-03-20', '2026-03-21', '2026-03-22']) expect(isBlockingHoliday('AE', undefined, date)).toBe(true)
+    expect(isBlockingHoliday('AE', undefined, '2026-03-23')).toBe(false)
+    expect(getHolidaysOn('AE', undefined, '2026-12-02')[0]).toMatchObject({ name: 'National Day', blocking: true })
+    expect(getLocalHolidayLanguage('AE')).toBe('ar')
   })
 
   it('provides default time zones and weekends', () => {

@@ -5,11 +5,12 @@
 結果を海外顧客にそのまま送れる **英文メール / WhatsApp テキスト** として出力します。
 
 サーバー不要の静的サイト（Vite + React + TypeScript + Tailwind CSS）で、計算はすべてブラウザ内で完結します。
+`main` ブランチへの push（PR マージ）で **GitHub Pages に自動デプロイ** されます。
 
 ## 主な機能
 
 ### 1. マルチリージョン・時差＆祝日比較
-- 基準国（既定: 🇯🇵 日本）と比較対象国を複数選択。初期プリセット：🇰🇷 韓国 / 🇹🇭 タイ / 🇲🇾 マレーシア / 🇻🇳 ベトナム / 🇮🇩 インドネシア / 🇰🇪 ケニア / 🇿🇦 南アフリカ / 🇳🇬 ナイジェリア / 🇺🇸 アメリカ / 🇩🇪 ドイツ。検索から約 200 か国を追加可能。
+- 基準国（既定: 🇯🇵 日本）と比較対象国を複数選択。初期プリセット：🇰🇷 韓国 / 🇹🇭 タイ / 🇲🇾 マレーシア / 🇻🇳 ベトナム / 🇮🇩 インドネシア / 🇰🇪 ケニア / 🇿🇦 南アフリカ / 🇳🇬 ナイジェリア / 🇺🇸 アメリカ / 🇩🇪 ドイツ / 🇦🇪 UAE。検索から約 200 か国を追加可能。
 - 各国の現在時刻と、営業時間（既定 9:00〜18:00）の **重なり＝会議可能時間帯** を 24 時間バーで表示。ホバーで全員の現地時刻を確認。
 - 国ごとの週末定義（土日・金土など）、`date-holidays` による祝日の自動判定、州・地域の祝日、タイムゾーン（夏時間対応）を個別に設定可能。
 
@@ -42,14 +43,23 @@ npm run dev
 | `npm run test:tz` | システムのタイムゾーンを変えてテスト（日付ズレがないことの確認） |
 | `npm run lint` | oxlint |
 
-Node.js `^20.19.0 || >=22.12.0` が必要です。
+Node.js `^20.19.0 || >=22.12.0` が必要です（CI は Node 20）。
 
 ## デプロイ
 
-`npm run build` で生成される `dist/` をそのまま静的ホスティングできます（アセットは相対パス）。
+### GitHub Pages（自動デプロイ）
 
-- **Cloudflare Pages**：Build command `npm run build` ／ Build output directory `dist`
-- **GitHub Pages**：`dist/` の内容を公開（`/<repository>/` のサブパスでも動作します）
+`.github/workflows/deploy.yml` が `main` への push（PR のマージ）ごとに `npm ci` → `npm run build` を実行し、`dist/` を GitHub Pages に公開します。Actions タブからの手動実行（`workflow_dispatch`）にも対応しています。
+
+**初回のみ必要な設定**：リポジトリの **Settings → Pages → Build and deployment → Source** を **「GitHub Actions」** に変更してください。
+
+公開 URL：https://gogogorima.github.io/global-leadtime-planner/
+
+`vite.config.ts` は `base: './'`（相対パス）なので、リポジトリ名やサブパスが変わっても設定変更は不要です。
+
+### その他
+
+`dist/` はそのまま任意の静的ホスティングに置けます。Cloudflare Pages の場合は Build command `npm run build` ／ Build output directory `dist`。
 
 ## 共有 URL の例
 

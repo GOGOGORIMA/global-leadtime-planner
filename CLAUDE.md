@@ -2,7 +2,8 @@
 
 海外営業・貿易実務向けの「時差・現地祝日統合型の納期逆算＆日程調整 Web アプリ」。
 サーバー不要の静的 SPA（Vite + React + TypeScript + Tailwind CSS）で、`npm run build` の `dist/` を
-Cloudflare Pages / GitHub Pages にそのまま配置できる。すべての計算はブラウザ内で完結する。
+Cloudflare Pages / GitHub Pages にそのまま配置できる。`main` への push で GitHub Actions が GitHub Pages へ自動デプロイする
+（`.github/workflows/deploy.yml`）。すべての計算はブラウザ内で完結する。
 
 ## コマンド
 
@@ -15,20 +16,24 @@ Cloudflare Pages / GitHub Pages にそのまま配置できる。すべての計
 | `npm run test:tz` | システム TZ を UTC−11 / UTC+14 / LA に変えてテスト（日付ズレがないことの確認、POSIX シェル用） |
 | `npm run lint` | oxlint |
 
-変更後は **`npm run lint && npm test && npm run build`** がすべてエラーなしで通ること。Node は `^20.19.0 || >=22.12.0`。
+変更後は **`npm run lint && npm test && npm run build`** がすべてエラーなしで通ること。
+Node は `^20.19.0 || >=22.12.0`（CI は Node 20。ツールチェーンは Node 20 / 22 の両方で検証済み。Node 20 で動かない
+パッケージを追加しないこと — 例: vitest 5 は Node 22 以上が必要なため vitest 4 を使用）。
 
 ## 技術スタック
 
 - Vite 8（Rolldown）/ React 19 / TypeScript 7（`tsc` はネイティブ版。`erasableSyntaxOnly`・`verbatimModuleSyntax` 有効 → `enum`・`namespace` 禁止、型のみの import は `import type`）
 - Tailwind CSS v4（`@tailwindcss/vite`。設定ファイルなし。テーマ・独自ユーティリティ `stripes` / `stripes-dark` / `no-spinner` は `src/index.css`）
 - `date-holidays`（約 200 か国の祝日ルール）、`lucide-react`（アイコン）
-- Vitest 5、oxlint
+- Vitest 4（Node 20 対応版）、oxlint
+- GitHub Actions（GitHub Pages への自動デプロイ）
 
 ## ディレクトリ構成
 
 ```
+.github/workflows/deploy.yml  main への push / 手動実行 → npm ci → npm run build → GitHub Pages へデプロイ
 index.html                 lang="ja"。favicon は public/favicon.svg
-vite.config.ts             base: './'（GitHub Pages のサブパスでも動作）・vendor/react チャンク分割
+vite.config.ts             base: './'（必須。リポジトリ名に依存せずサブパスで動作）・vendor/react チャンク分割
 tsconfig.{app,node,test}.json  app はテスト除外 / test は node 型を含む
 src/
   main.tsx, App.tsx        ルート。派生データ（国設定→カレンダー→スケジュール→レポート）を useMemo で組み立て
@@ -94,8 +99,8 @@ src/
 
 ### 国・タイムゾーン・週末
 - カタログ = date-holidays 対応国（約 207）＋祝日データなしの追加国（KH, LA, MM, NP, MN, QA, KW, OM, JO, IQ, MV。週末と TZ のみ）。名称は `Intl.DisplayNames`（EN long / JA short）。
-- 初期状態：基準国 `JP`、比較対象 `KR, TH, MY, VN, ID, KE, ZA, NG, US, DE`、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）。
-- 既定の週末：土日。金土 = SA, EG, QA, KW, BH, OM, JO, IL, BD, DZ, IQ, LY, SD, MV／金のみ = IR／金日 = BN／土のみ = NP／マレーシアのケダ・クランタン・トレンガヌ州（MY-02/03/11）は金土。国ごとに UI で上書き可能。
+- 初期状態：基準国 `JP`、比較対象 `KR, TH, MY, VN, ID, KE, ZA, NG, US, DE, AE`（`PRESET_PARTNER_COUNTRIES`。プリセットとしてワンクリック追加/解除も可）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）。
+- 既定の週末：土日（UAE も 2022 年から土日）。金土 = SA, EG, QA, KW, BH, OM, JO, IL, BD, DZ, IQ, LY, SD, MV／金のみ = IR／金日 = BN／土のみ = NP／マレーシアのケダ・クランタン・トレンガヌ州（MY-02/03/11）は金土。国ごとに UI で上書き可能。
 - タイムゾーン候補：US/CA/AU/BR/MX/RU は主要都市の厳選リスト、他は date-holidays の zones。地域を選ぶとその地域の TZ が既定になる（例 US-CA → America/Los_Angeles）。DST は Intl が自動反映。
 
 ### 会議可能時間帯（`timezone.ts`）
@@ -131,16 +136,30 @@ src/
 
 ## テスト
 
-`src/utils/*.test.ts`（57 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
+`src/utils/*.test.ts`（58 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット国（UAE の週末・複数日のイードを含む）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
 
 ## デプロイ
 
+### GitHub Pages（GitHub Actions による自動デプロイ）
+- ワークフロー：`.github/workflows/deploy.yml`
+  - トリガー：`main` への push（＝ PR マージ）と `workflow_dispatch`（Actions タブから手動実行）
+  - `permissions`: `contents: read` / `pages: write` / `id-token: write`、`concurrency: pages`（実行中のデプロイはキャンセルしない）
+  - `build` ジョブ：`actions/checkout@v4` → `actions/setup-node@v4`（Node 20、npm キャッシュ）→ `npm ci` → `npm run build`
+    → `actions/configure-pages@v5` → `actions/upload-pages-artifact@v3`（`path: ./dist`）
+  - `deploy` ジョブ：`actions/deploy-pages@v4`（environment `github-pages`、URL はジョブ出力 `page_url`）
+- **初回のみ**：リポジトリの Settings → Pages → Build and deployment → Source を **GitHub Actions** にする
+  （未設定だと `configure-pages` が失敗する）。公開 URL は `https://<owner>.github.io/<repo>/`。
+- `vite.config.ts` の `base: './'` によりアセットは相対パスで参照されるため、リポジトリ名（サブパス）を変えても設定変更は不要。
+  ルーティングはクエリのみなので 404.html などの SPA フォールバックも不要。
+
+### その他の静的ホスティング
 - **Cloudflare Pages**：Build command `npm run build`、Build output directory `dist`。
-- **GitHub Pages**：`dist/` の中身を公開（Actions の `upload-pages-artifact` など）。`base: './'` のためサブパス（`/<repo>/`）でもそのまま動作。ルーティングはクエリのみなので SPA フォールバック設定は不要。
 - バンドル：アプリ本体 ~105 kB、React ~220 kB、vendor（date-holidays の全世界ルール＋moment-timezone）~1.45 MB（gzip ~250 kB）。vendor は別チャンクでキャッシュが効く。
 
 ## 注意点・既知の制約
 
-- 祝日データは date-holidays に依存（参考情報）。イスラム暦の祝日は計算値のため公式発表と 1 日ずれる場合がある。中国の振替出勤日（调休）や日本企業の年末年始休業（12/29〜）などは含まれないため、カスタム休日/臨時稼働日で補う。
+- 祝日データは date-holidays に依存（参考情報）。イスラム暦の祝日は計算値のため公式発表と 1 日ずれる場合がある。
+  UAE（AE）のデータは公式の祝日一覧と差異がある可能性あり（例: "First day of Ramadan"・"Laylat al-Miʿraj" が public、
+  Arafat Day や National Day 2 日目が未収録）。運用前に当年の公式発表と照合し、カスタム休日/臨時稼働日で調整する。中国の振替出勤日（调休）や日本企業の年末年始休業（12/29〜）などは含まれないため、カスタム休日/臨時稼働日で補う。
 - 工程名・カスタム休日名は英文メールにそのまま入るため英語推奨（UI 上に候補リストあり）。
 - `useNow` は分単位で更新。現在時刻表示以外の計算は `today`（基準国 TZ の日付）に依存する。

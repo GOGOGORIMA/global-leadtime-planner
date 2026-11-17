@@ -19,7 +19,7 @@ export interface CountryInfo {
 export const DEFAULT_BASE_COUNTRY = 'JP'
 
 /** Partner countries pre-selected on first visit (and offered as one-click presets). */
-export const PRESET_PARTNER_COUNTRIES = ['KR', 'TH', 'MY', 'VN', 'ID', 'KE', 'ZA', 'NG', 'US', 'DE'] as const
+export const PRESET_PARTNER_COUNTRIES = ['KR', 'TH', 'MY', 'VN', 'ID', 'KE', 'ZA', 'NG', 'US', 'DE', 'AE'] as const
 
 /** Default business hours: 09:00–18:00 local time. */
 export const DEFAULT_WORK_START = 9 * 60
