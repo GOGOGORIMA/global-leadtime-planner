@@ -23,7 +23,8 @@ Node は `^20.19.0 || >=22.12.0`（CI は Node 20。ツールチェーンは Nod
 ## 技術スタック
 
 - Vite 8（Rolldown）/ React 19 / TypeScript 7（`tsc` はネイティブ版。`erasableSyntaxOnly`・`verbatimModuleSyntax` 有効 → `enum`・`namespace` 禁止、型のみの import は `import type`）
-- Tailwind CSS v4（`@tailwindcss/vite`。設定ファイルなし。テーマ・独自ユーティリティ `stripes` / `stripes-dark` / `no-spinner` は `src/index.css`）
+- Tailwind CSS v4（`@tailwindcss/vite`。設定ファイルなし。`src/index.css` の `@import "tailwindcss";` を `main.tsx` で読み込み。
+  テーマと独自ユーティリティ `stripes` / `stripes-dark` / `gantt-skip`（45° ストライプ）/ `no-spinner` も `src/index.css`）
 - `date-holidays`（約 200 か国の祝日ルール）、`lucide-react`（アイコン）
 - Vitest 4（Node 20 対応版）、oxlint
 - GitHub Actions（GitHub Pages への自動デプロイ）
@@ -67,11 +68,25 @@ src/
 | `AppHeader` | 共有 URL コピー、プリセット保存/読込/削除（LocalStorage）、リセット |
 | `CountryPanel` | 基準国 select、比較対象国チップ（国旗＋国名・現地時刻＋TZ 略称・⚙設定・×削除）、プリセット 9 か国トグル、国検索コンボボックス |
 | `CountrySettingsModal` | 国ごとのタイムゾーン・地域（州）・週末（曜日トグル）・営業時間 |
-| `MeetingPlanner` | 基準国時間の 24h 軸に各国営業時間バー（祝日/週末はハッチ）、基準国との重なり、全員の重なり、現在時刻線、ホバーで各国現地時刻 |
+| `MeetingPlanner` | 基準国時間の 24h 軸に各国営業時間バー（祝日/週末はハッチ）、基準国の営業時間帯（破線の薄緑帯）、全員の重なり、全行を貫く現在時刻線、ホバーで各国現地時刻 |
 | `SchedulePanel` | 順算/逆算切替、基準日、工程（名称・日数・適用カレンダー・並べ替え・削除・テンプレート）、結果サマリー |
-| `Timeline` | ガントチャート：国別の稼働日(緑)/週末(灰)/祝日(赤)/カスタム休日(橙ハッチ)/臨時稼働(濃緑)、工程バー（スキップ日はハッチ）。セルのホバーで祝日名（英語/現地語）、クリックでオーバーライド切替 |
+| `Timeline` | 各国の稼働カレンダー＆工程ガントチャート：稼働日(緑)/週末(灰)/祝日(赤＋白点)/カスタム休日(アンバー)/臨時稼働(濃緑＋白点)、工程バー（スキップ日は 45° ストライプ）。セルのホバーで祝日名（英語/現地語）、クリックでオーバーライド切替 |
 | `CustomHolidayManager` | 期間指定でカスタム休日/稼働日を追加、登録済み一覧と削除 |
 | `ExportPanel` | 英文メール / WhatsApp の生成・プレビュー・ワンクリックコピー・メール/WhatsApp で開く |
+
+## レイアウト仕様（変更時は維持すること）
+
+- **上段**：`grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-6 items-start`。左 = 対象国と営業時間（340px 固定）、右 = 現在時刻と会議可能時間帯。
+  1024px 以上で必ず横並び（Windows の表示倍率 125–150% でも横並びになるよう `xl` ではなく `lg`）。
+- **会議可能時間帯**の各行：`sm:grid-cols-[220px_1fr]`（左ラベル 220px ＋ 24h バー）。ラベル 1 段目 = 国旗＋国名（太字）＋営業中/時間外バッジ、
+  2 段目 = `23:01 (火) · UTC+9 · 重なり 8時間`（重なりは `text-emerald-600 font-medium`。30 分単位は「5.5時間」）。
+  バーは `relative h-9 bg-slate-100 rounded-md`、3 時間ごとのグリッド線、基準国の営業時間帯を全行に破線の薄緑帯で表示、
+  各国の営業時間は `absolute h-6 top-1.5 bg-emerald-400/80 border border-emerald-600 rounded`（日をまたぐ場合は分割）、
+  バーの下に現地時刻（基準時間の 0/6/12/18 時の位置）、現在時刻は全行を貫く 1 本の赤線（`w-0.5 bg-rose-500 z-20`）。スマホ（640px 未満）は縦積み。
+- **各国の稼働カレンダー＆ガントチャート**：全幅パネル内の `overflow-x-auto` マトリクス。左ラベル列は `sticky left-0 z-10` の 210px
+  （スマホは 112px）＋ `border-r`。1 日 = 28px 列（`w-7`）、セルは 26×28px ＋ 左右 1px マージン（列幅 28px を保ち、ヘッダー・ガントと 1px もずれない）。
+  行の高さ 32px（`h-8`）。ヘッダーはバッジ行（今日 / 発注期限・希望納期 など＋縦の実線）→ 年月 → 曜日と日付。
+  ガントバーは `h-6 rounded` で、開始日〜終了日のセル境界にぴったり揃える（left = 開始列×28+1, width = 日数×28−2）。
 
 ## UI 表記ルール（国旗・国名）
 

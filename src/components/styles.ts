@@ -2,15 +2,11 @@ import type { DayStatus } from '../utils/dateCalc'
 
 /** Day-status colours shared by the timeline, legend and meeting bars. */
 export const DAY_STATUS_STYLES: Record<DayStatus, { cell: string; label: string; swatch: string }> = {
-  working: { cell: 'bg-emerald-300 hover:bg-emerald-400', swatch: 'bg-emerald-300', label: '稼働日' },
+  working: { cell: 'bg-emerald-400 hover:bg-emerald-500', swatch: 'bg-emerald-400', label: '稼働日' },
   weekend: { cell: 'bg-slate-200 hover:bg-slate-300', swatch: 'bg-slate-200', label: '週末' },
   holiday: { cell: 'bg-rose-500 hover:bg-rose-600', swatch: 'bg-rose-500', label: '祝日' },
-  'custom-off': { cell: 'bg-orange-400 stripes hover:bg-orange-500', swatch: 'bg-orange-400 stripes', label: 'カスタム休日' },
-  'custom-work': {
-    cell: 'bg-emerald-600 hover:bg-emerald-700',
-    swatch: 'bg-emerald-600',
-    label: '臨時稼働日',
-  },
+  'custom-off': { cell: 'bg-amber-400 hover:bg-amber-500', swatch: 'bg-amber-400', label: 'カスタム休日' },
+  'custom-work': { cell: 'bg-emerald-700 hover:bg-emerald-800', swatch: 'bg-emerald-700', label: '臨時稼働日' },
 }
 
 export interface StepColor {
@@ -22,7 +18,7 @@ export interface StepColor {
 }
 
 /**
- * Step palette — deliberately avoids emerald (working), rose (holiday), orange (custom day off)
+ * Step palette — deliberately avoids emerald (working), rose (holiday), amber (custom day off)
  * and slate (weekend) so bars never look like calendar states.
  */
 const STEP_COLORS: readonly StepColor[] = [

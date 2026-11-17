@@ -185,7 +185,7 @@ export function CustomHolidayManager({ countries, overrides, dispatch, defaultDa
                       ? formatJaDate(range.start)
                       : `${formatJaDate(range.start)} – ${formatJaDate(range.end, { year: range.start.slice(0, 4) !== range.end.slice(0, 4) })}`}
                   </span>
-                  <Badge tone={range.kind === 'off' ? 'orange' : 'emerald'}>{range.kind === 'off' ? '休業' : '稼働'}</Badge>
+                  <Badge tone={range.kind === 'off' ? 'amber' : 'emerald'}>{range.kind === 'off' ? '休業' : '稼働'}</Badge>
                   <span className={cx('min-w-0 flex-1 truncate text-xs', range.label ? 'text-slate-700' : 'text-slate-400')}>
                     {range.label || '（名称なし）'}
                   </span>

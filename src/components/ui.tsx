@@ -15,7 +15,7 @@ interface CardProps {
 
 export function Card({ id, icon, title, subtitle, actions, children, className, bodyClassName }: CardProps) {
   return (
-    <section id={id} className={cx('rounded-2xl border border-slate-200 bg-white shadow-sm', className)}>
+    <section id={id} className={cx('w-full rounded-xl border border-slate-200 bg-white shadow-sm', className)}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-3 sm:px-5">
         <div className="flex min-w-0 items-start gap-3">
           {icon && (

@@ -89,15 +89,20 @@ export default function App() {
       <AppHeader query={query} onLoadQuery={loadQuery} onReset={reset} />
 
       <main className="mx-auto w-full max-w-[1440px] flex-1 space-y-6 px-4 py-6 sm:px-6">
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,25rem)_minmax(0,1fr)]">
-          <CountryPanel countries={countries} dispatch={dispatch} onOpenSettings={setSettingsFor} now={now} />
-          <MeetingPlanner
-            countries={countries}
-            calendars={calendars}
-            date={meetingDate ?? today}
-            today={today}
-            onDateChange={setMeetingDate}
-          />
+        {/* Top: country list (340px) | current time & meeting window (rest) — side by side from 1024px */}
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[340px_1fr]">
+          <div className="min-w-0">
+            <CountryPanel countries={countries} dispatch={dispatch} onOpenSettings={setSettingsFor} now={now} />
+          </div>
+          <div className="min-w-0">
+            <MeetingPlanner
+              countries={countries}
+              calendars={calendars}
+              date={meetingDate ?? today}
+              today={today}
+              onDateChange={setMeetingDate}
+            />
+          </div>
         </div>
 
         <SchedulePanel
