@@ -6,7 +6,8 @@ import type { ResolvedCountry } from '../utils/calendars'
 import { formatWeekendJa } from '../utils/dateFormat'
 import { formatClock, formatInstantClock, getTimeZoneAbbreviation } from '../utils/timezone'
 import { btn, cx, inputClass, labelClass } from './classes'
-import { Badge, Card, Flag } from './ui'
+import { CountryFlag } from './CountryFlag'
+import { Badge, Card } from './ui'
 
 interface CountryPanelProps {
   countries: readonly ResolvedCountry[]
@@ -47,11 +48,10 @@ function CountryChip({
         country.isBase ? 'border-indigo-200 bg-indigo-50/60' : 'border-slate-200 bg-white',
       )}
     >
-      <Flag flag={country.info.flag} className="text-xl" />
+      <CountryFlag code={country.code} />
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-medium text-slate-800">{country.info.nameJa}</span>
-          <span className="text-[10px] font-semibold text-slate-400">{country.code}</span>
           {!country.info.hasHolidayData && (
             <Badge tone="amber" className="px-1! py-0! text-[10px]">
               祝日なし
@@ -122,7 +122,7 @@ function CountrySearch({ selected, onAdd }: { selected: ReadonlySet<string>; onA
         aria-controls={listId}
         aria-autocomplete="list"
         aria-label="国を検索して追加"
-        placeholder="国名・コードで検索して追加（例: 中国, India, SG）"
+        placeholder="国名で検索して追加（例: 中国, India, シンガポール）"
         className={cx(inputClass, 'pl-9')}
         value={query}
         onChange={(e) => {
@@ -174,12 +174,11 @@ function CountrySearch({ selected, onAdd }: { selected: ReadonlySet<string>; onA
                   isSelected && 'cursor-default text-slate-400',
                 )}
               >
-                <Flag flag={c.flag} className="text-lg" />
+                <CountryFlag code={c.code} lazy />
                 <span className="font-medium">{c.nameJa}</span>
                 <span className="truncate text-xs text-slate-400">{c.nameEn}</span>
                 <span className="ml-auto flex items-center gap-1.5 text-[10px] font-semibold text-slate-400">
                   {!c.hasHolidayData && <Badge tone="amber">祝日なし</Badge>}
-                  {c.code}
                   {isSelected && <Check size={14} className="text-emerald-600" />}
                 </span>
               </li>
@@ -208,16 +207,17 @@ export function CountryPanel({ countries, dispatch, onOpenSettings, now }: Count
           <label className={labelClass} htmlFor="base-country">
             基準国（自社拠点）
           </label>
-          <div className="flex gap-2">
+          <div className="relative">
+            <CountryFlag code={base.code} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2" />
             <select
               id="base-country"
-              className={inputClass}
+              className={cx(inputClass, 'pl-10')}
               value={base.code}
               onChange={(e) => dispatch({ type: 'setBase', code: e.target.value })}
             >
               {catalog.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {c.flag} {c.nameJa}（{c.code}）
+                  {c.nameJa}
                 </option>
               ))}
             </select>
@@ -296,8 +296,8 @@ export function CountryPanel({ countries, dispatch, onOpenSettings, now }: Count
                     isBase && 'cursor-not-allowed opacity-50',
                   )}
                 >
-                  <Flag flag={info.flag} />
-                  {code}
+                  <CountryFlag code={code} size="sm" />
+                  {info.nameJa}
                   {active ? <Check size={12} /> : <Plus size={12} />}
                 </button>
               )

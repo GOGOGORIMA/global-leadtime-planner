@@ -220,7 +220,7 @@ export function renderWhatsApp(report: ScheduleReport, options: ExportOptions, m
           const label = holidayLabel(h.name, h.localName, options.includeLocalNames)
           return `${range} ${label}${h.onWeekend ? ' (weekend)' : ''}`
         })
-        lines.push(`${group.country.flag} ${group.country.nameEn}: ${items.join(', ')}`)
+        lines.push(`${group.country.nameEn}: ${items.join(', ')}`)
       }
     }
   }

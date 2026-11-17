@@ -39,7 +39,8 @@ src/
   main.tsx, App.tsx        ルート。派生データ（国設定→カレンダー→スケジュール→レポート）を useMemo で組み立て
   index.css                Tailwind 読み込み・テーマ・独自ユーティリティ
   types.ts                 PlannerState / Step / CountrySettings / DayOverride / CALENDAR_DAYS
-  data/countries.ts        国カタログ（名称 EN/JA・国旗・既定 TZ・既定週末・地域）とプリセット
+  data/countries.ts        国カタログ（名称 EN/JA・既定 TZ・既定週末・地域）とプリセット
+  data/flags.ts            国旗 SVG（flag-icons）の URL 解決（import.meta.glob。各 SVG は個別アセット）
   data/holidayCorrections.ts  date-holidays と公式祝日一覧の差分補正（現在は AE。出典付き）
   state/defaults.ts        初期状態・工程テンプレート・工程名候補・ID 生成・上限値
   state/plannerReducer.ts  useReducer 用リデューサと sanitizeState（URL 等の外部入力を安全化）
@@ -55,7 +56,8 @@ src/
   utils/urlState.ts        状態 ⇄ URL クエリ文字列
   utils/storage.ts         LocalStorage（プリセット・前回状態・出力設定）。全アクセス try/catch
   utils/clipboard.ts       クリップボードコピー（非セキュアコンテキスト用フォールバック付き）
-  components/              UI（下記）。classes.ts = 共有クラス文字列、styles.ts = 日ステータス/工程の配色
+  components/              UI（下記）。classes.ts = 共有クラス文字列、styles.ts = 日ステータス/工程の配色、
+                           CountryFlag.tsx = 国旗画像（絵文字は使わない）
 ```
 
 ### UI（`src/components`）
@@ -63,13 +65,25 @@ src/
 | コンポーネント | 役割 |
 | --- | --- |
 | `AppHeader` | 共有 URL コピー、プリセット保存/読込/削除（LocalStorage）、リセット |
-| `CountryPanel` | 基準国 select、比較対象国チップ（現地時刻・⚙設定・×削除）、プリセット 10 か国トグル、国検索コンボボックス |
+| `CountryPanel` | 基準国 select、比較対象国チップ（国旗＋国名・現地時刻＋TZ 略称・⚙設定・×削除）、プリセット 9 か国トグル、国検索コンボボックス |
 | `CountrySettingsModal` | 国ごとのタイムゾーン・地域（州）・週末（曜日トグル）・営業時間 |
 | `MeetingPlanner` | 基準国時間の 24h 軸に各国営業時間バー（祝日/週末はハッチ）、基準国との重なり、全員の重なり、現在時刻線、ホバーで各国現地時刻 |
 | `SchedulePanel` | 順算/逆算切替、基準日、工程（名称・日数・適用カレンダー・並べ替え・削除・テンプレート）、結果サマリー |
 | `Timeline` | ガントチャート：国別の稼働日(緑)/週末(灰)/祝日(赤)/カスタム休日(橙ハッチ)/臨時稼働(濃緑)、工程バー（スキップ日はハッチ）。セルのホバーで祝日名（英語/現地語）、クリックでオーバーライド切替 |
 | `CustomHolidayManager` | 期間指定でカスタム休日/稼働日を追加、登録済み一覧と削除 |
 | `ExportPanel` | 英文メール / WhatsApp の生成・プレビュー・ワンクリックコピー・メール/WhatsApp で開く |
+
+## UI 表記ルール（国旗・国名）
+
+1. 国は常に **「国旗画像＋日本語の国名」** で表示する（左ペイン、会議可能時間帯、ガントチャートの行ラベル・工程の適用カレンダー表記、
+   ツールチップ、カスタム休日一覧、設定ダイアログなどすべて）。
+2. **`JP` / `TH` などの 2 文字の国コードを画面に出さない**（国コードは内部 ID・URL 用のみ。`CountryInfo.code` を表示に使わない）。
+   州・地域のコード（例: `CA`、`10`）も表示しない。
+3. **国旗に絵文字を使わない**（Windows では 🇯🇵 が「JP」の文字になる）。`components/CountryFlag.tsx` を使う。
+   国旗は `flag-icons`（MIT）の SVG をこのサイトから配信（外部 CDN なし）。`?no-inline` で個別アセットにしているため、
+   ブラウザは表示中の国旗だけを取得する。
+4. `<select>` の option は画像を表示できないため国名のみとし、選択中の国旗を select の左端に重ねて表示する。
+5. 英文出力（メール / WhatsApp）にも国旗絵文字を入れない（受信側が Windows の場合も文字化けさせない）。
 
 ## 最重要ルール：日付の扱い（タイムゾーンずれ防止）
 
@@ -105,9 +119,12 @@ src/
 
 ### 国・タイムゾーン・週末
 - カタログ = date-holidays 対応国（約 207）＋祝日データなしの追加国（KH, LA, MM, NP, MN, QA, KW, OM, JO, IQ, MV。週末と TZ のみ）。名称は `Intl.DisplayNames`（EN long / JA short）。
-- 初期状態：基準国 `JP`、比較対象 `KR, TH, MY, VN, ID, KE, ZA, NG, US, DE, AE`（`PRESET_PARTNER_COUNTRIES`。プリセットとしてワンクリック追加/解除も可）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）。
+- 初期状態：基準国 日本、比較対象は 韓国・台湾・中国・アメリカ・タイ・マレーシア・インド・ベトナム・シンガポール の 9 か国をこの順に表示
+  （`PRESET_PARTNER_COUNTRIES = KR, TW, CN, US, TH, MY, IN, VN, SG`。プリセットとしてワンクリック追加/解除も可）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）。
 - 既定の週末：土日（UAE も 2022 年から土日）。金土 = SA, EG, QA, KW, BH, OM, JO, IL, BD, DZ, IQ, LY, SD, MV／金のみ = IR／金日 = BN／土のみ = NP／マレーシアのケダ・クランタン・トレンガヌ州（MY-02/03/11）は金土。国ごとに UI で上書き可能。
 - タイムゾーン候補：US/CA/AU/BR/MX/RU は主要都市の厳選リスト、他は date-holidays の zones。地域を選ぶとその地域の TZ が既定になる（例 US-CA → America/Los_Angeles）。DST は Intl が自動反映。
+- タイムゾーン略称：DST のない主要ゾーンは固定表記（JST, KST, CST〔中国・台湾〕, ICT, MYT, SGT, IST, WIB など）、DST のあるゾーンは Intl（EST/EDT, CET/CEST…）、
+  それ以外は `UTC±h`。インド（UTC+5:30）など 30 分単位のオフセットも営業時間の重なり計算・表示に正しく反映される。
 
 ### 会議可能時間帯（`timezone.ts`）
 - 対象日の基準国 00:00〜24:00（DST 日は 23/25h）をウィンドウとし、各国の営業時間を最大 3 つの現地日付にまたがって切り出す。現地の非稼働日（週末/祝日/カスタム休日）の枠はハッチ表示し、重なり計算から除外。
@@ -142,7 +159,7 @@ src/
 
 ## テスト
 
-`src/utils/*.test.ts`（63 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット国（UAE の週末・複数日のイードを含む）、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
+`src/utils/*.test.ts`（69 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット 9 か国の順序と日本語名、全カタログ国の国旗 SVG の有無・日本語名の重複なし、台湾（UTC+8・旧正月）・インド（UTC+5:30・日本との重なり 5.5 時間）、UAE の週末・複数日のイード、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
 
 ## デプロイ
 
@@ -160,7 +177,8 @@ src/
 
 ### その他の静的ホスティング
 - **Cloudflare Pages**：Build command `npm run build`、Build output directory `dist`。
-- バンドル：アプリ本体 ~105 kB、React ~220 kB、vendor（date-holidays の全世界ルール＋moment-timezone）~1.45 MB（gzip ~250 kB）。vendor は別チャンクでキャッシュが効く。
+- バンドル：アプリ本体 ~125 kB、React ~220 kB、vendor（date-holidays の全世界ルール＋moment-timezone＋国旗 URL 表）~1.47 MB（gzip ~253 kB）。
+  国旗 SVG は 271 ファイル（合計 ~2.7 MB）だが、表示中のものだけが取得される。vendor は別チャンクでキャッシュが効く。
 
 ## 注意点・既知の制約
 
@@ -170,5 +188,9 @@ src/
   National Day は 12/2–3 の 2 日間（12/1 の Commemoration Day は休日ではない）。ただし閣議による年ごとの振替
   （例: 2025 年の National Day は 12/1–2 に移動）と、月の目視による 1 日のずれは反映できないため、公式発表に合わせて
   カスタム休日/臨時稼働日で調整する。中国の振替出勤日（调休）や日本企業の年末年始休業（12/29〜）などは含まれないため、カスタム休日/臨時稼働日で補う。
+- 台湾（TW）：date-holidays は土曜に重なる祝日の金曜振替を元日にしか適用しない（例: 2026 年の 2/28・10/10 の前日金曜は休日扱いにならない）。
+  台湾の補班（振替出勤日）も未収録。行政院人事行政総処の公式カレンダーと照合し、カスタム休日/臨時稼働日で調整する。
+- インド（IN）：date-holidays は国の祝日（共和国記念日・独立記念日・ガンディー生誕日など）中心で、ディワリやホーリーなど州・企業で異なる祝日は
+  含まれない。必要に応じて地域（州）を選ぶか、カスタム休日で追加する。
 - 工程名・カスタム休日名は英文メールにそのまま入るため英語推奨（UI 上に候補リストあり）。
 - `useNow` は分単位で更新。現在時刻表示以外の計算は `today`（基準国 TZ の日付）に依存する。

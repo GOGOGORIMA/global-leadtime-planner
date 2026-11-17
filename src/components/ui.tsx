@@ -147,13 +147,6 @@ export function Segmented<T extends string>({
   )
 }
 
-export function Flag({ flag, className }: { flag: string; className?: string }) {
-  return (
-    <span aria-hidden className={cx('inline-block leading-none', className)}>
-      {flag}
-    </span>
-  )
-}
 
 const toneClasses = {
   slate: 'bg-slate-100 text-slate-600 ring-slate-200',

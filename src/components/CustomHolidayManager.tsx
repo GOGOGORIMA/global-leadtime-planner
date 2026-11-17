@@ -6,7 +6,8 @@ import { groupOverrideRanges, type ResolvedCountry } from '../utils/calendars'
 import { diffDays, eachDay, isISODate, type ISODate, type OverrideKind } from '../utils/dateCalc'
 import { formatJaDate } from '../utils/dateFormat'
 import { btn, cx, inputClass, labelClass } from './classes'
-import { Badge, Flag, Segmented } from './ui'
+import { CountryFlag } from './CountryFlag'
+import { Badge, Segmented } from './ui'
 
 const MAX_RANGE_DAYS = 366
 
@@ -66,18 +67,24 @@ export function CustomHolidayManager({ countries, overrides, dispatch, defaultDa
             <label className={labelClass} htmlFor="override-country">
               国
             </label>
-            <select
-              id="override-country"
-              className={inputClass}
-              value={selectedCountry}
-              onChange={(e) => setCountry(e.target.value)}
-            >
-              {countries.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.info.flag} {c.info.nameJa}（{c.code}）
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <CountryFlag
+                code={selectedCountry}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
+              />
+              <select
+                id="override-country"
+                className={cx(inputClass, 'pl-10')}
+                value={selectedCountry}
+                onChange={(e) => setCountry(e.target.value)}
+              >
+                {countries.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.info.nameJa}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <div>
             <label className={labelClass} htmlFor="override-start">
@@ -171,8 +178,8 @@ export function CustomHolidayManager({ countries, overrides, dispatch, defaultDa
               const c = byCode.get(range.country)
               return (
                 <li key={`${range.country}-${range.start}-${range.kind}`} className="flex items-center gap-2 px-3 py-2 text-sm">
-                  {c && <Flag flag={c.info.flag} />}
-                  <span className="w-8 shrink-0 text-xs font-semibold text-slate-500">{range.country}</span>
+                  <CountryFlag code={range.country} size="sm" />
+                  <span className="w-24 shrink-0 truncate text-xs font-medium text-slate-600">{c?.info.nameJa ?? ''}</span>
                   <span className="shrink-0 text-xs font-medium text-slate-800 tabular-nums">
                     {range.start === range.end
                       ? formatJaDate(range.start)

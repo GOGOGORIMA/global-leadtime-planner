@@ -96,8 +96,10 @@ describe('English export text', () => {
     expect(text).toContain('*Proposed Schedule*')
     expect(text).toContain('📦 Estimated delivery: *Mon, 14 Dec 2026*')
     expect(text).toContain('1. Procurement & Production: 17 Nov – 24 Nov (5 business days in Japan)')
-    expect(text).toContain('🇯🇵 Japan: 23 Nov Labor Thanksgiving Day')
-    expect(text).toContain('🇺🇸 United States: 26 Nov Thanksgiving Day')
+    expect(text).toContain('Japan: 23 Nov Labor Thanksgiving Day')
+    expect(text).toContain('United States: 26 Nov Thanksgiving Day')
+    // No flag emoji: Windows would render them as letters such as "JP".
+    expect(text).not.toMatch(/[\u{1F1E6}-\u{1F1FF}]/u)
   })
 
   it('omits the holiday section when requested', () => {
