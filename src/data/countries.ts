@@ -7,10 +7,10 @@ import { getHolidayRegions, getHolidayTimeZones, getSupportedHolidayCountries, h
 import { isValidTimeZone } from '../utils/timezone'
 
 export interface CountryInfo {
+  /** ISO 3166-1 alpha-2 code — internal identifier only; never shown in the UI (flag + name instead). */
   code: string
   nameEn: string
   nameJa: string
-  flag: string
   /** `false` for countries without holiday rules (only weekends + custom holidays apply). */
   hasHolidayData: boolean
 }
@@ -18,8 +18,11 @@ export interface CountryInfo {
 /** Base country used on first visit. */
 export const DEFAULT_BASE_COUNTRY = 'JP'
 
-/** Partner countries pre-selected on first visit (and offered as one-click presets). */
-export const PRESET_PARTNER_COUNTRIES = ['KR', 'TH', 'MY', 'VN', 'ID', 'KE', 'ZA', 'NG', 'US', 'DE', 'AE'] as const
+/**
+ * Partner countries pre-selected on first visit, in this order (also offered as one-click presets):
+ * Korea, Taiwan, China, United States, Thailand, Malaysia, India, Vietnam, Singapore.
+ */
+export const PRESET_PARTNER_COUNTRIES = ['KR', 'TW', 'CN', 'US', 'TH', 'MY', 'IN', 'VN', 'SG'] as const
 
 /** Default business hours: 09:00–18:00 local time. */
 export const DEFAULT_WORK_START = 9 * 60
@@ -152,11 +155,6 @@ function safeDisplayNames(locale: string, style: 'long' | 'short'): Intl.Display
   }
 }
 
-/** Regional-indicator flag emoji for an ISO 3166-1 alpha-2 code (`JP` → 🇯🇵). */
-export function flagEmoji(code: string): string {
-  if (!/^[A-Z]{2}$/.test(code)) return '🏳️'
-  return String.fromCodePoint(...[...code].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65))
-}
 
 let catalogCache: { list: CountryInfo[]; byCode: Map<string, CountryInfo> } | null = null
 
@@ -175,7 +173,7 @@ function getCatalog() {
     } catch {
       // keep fallbacks
     }
-    list.push({ code, nameEn, nameJa, flag: flagEmoji(code), hasHolidayData: hasHolidayData(code) })
+    list.push({ code, nameEn, nameJa, hasHolidayData: hasHolidayData(code) })
   }
   list.sort((a, b) => a.nameJa.localeCompare(b.nameJa, 'ja'))
   catalogCache = { list, byCode: new Map(list.map((c) => [c.code, c])) }
@@ -193,7 +191,6 @@ export function getCountryInfo(code: string): CountryInfo {
       code,
       nameEn: code,
       nameJa: code,
-      flag: flagEmoji(code),
       hasHolidayData: false,
     }
   )

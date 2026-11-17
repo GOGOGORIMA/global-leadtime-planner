@@ -22,7 +22,6 @@ import { getTimeZoneAbbreviation, zonedTimeToInstant } from './timezone'
 export interface ReportCountry {
   code: string
   nameEn: string
-  flag: string
   timeZone: string
   timeZoneAbbr: string
 }
@@ -90,7 +89,6 @@ export function toReportCountry(country: ResolvedCountry, onDate: ISODate): Repo
   return {
     code: country.code,
     nameEn: country.info.nameEn,
-    flag: country.info.flag,
     timeZone: country.timeZone,
     timeZoneAbbr: getTimeZoneAbbreviation(country.timeZone, noon),
   }

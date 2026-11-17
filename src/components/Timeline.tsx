@@ -35,7 +35,8 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { CustomHolidayManager } from './CustomHolidayManager'
 import { DAY_STATUS_STYLES, stepColor } from './styles'
 import { btn, cx } from './classes'
-import { Card, Flag } from './ui'
+import { CountryFlag } from './CountryFlag'
+import { Card } from './ui'
 
 const CELL_W = 26
 const LABEL_W = 188
@@ -198,11 +199,8 @@ const TimelineGrid = memo(function TimelineGrid({
             className="sticky left-0 z-10 flex h-full shrink-0 items-center gap-1.5 border-r border-slate-100 bg-white pr-2"
             style={{ width: labelW }}
           >
-            <Flag flag={row.country.info.flag} className="text-base" />
-            {!compact && <span className="truncate text-xs font-medium text-slate-700">{row.country.info.nameJa}</span>}
-            <span className={cx(compact ? 'text-xs font-semibold text-slate-600' : 'text-[10px] text-slate-400')}>
-              {row.country.code}
-            </span>
+            <CountryFlag code={row.country.code} size="sm" />
+            <span className="truncate text-xs font-medium text-slate-700">{row.country.info.nameJa}</span>
             {row.country.isBase && !compact && (
               <span className="rounded bg-indigo-50 px-1 text-[9px] font-semibold text-indigo-600">基準</span>
             )}
@@ -304,7 +302,7 @@ function Tooltip({
       style={{ left: Math.max(8, Math.min(x - 144, viewport - 296)), top: y + 10 }}
     >
       <div className="flex items-center gap-1.5 text-slate-500">
-        <Flag flag={country.info.flag} />
+        <CountryFlag code={country.code} size="sm" />
         <span className="font-medium text-slate-700">{country.info.nameJa}</span>
         <span className="ml-auto tabular-nums">
           {formatJaDate(info.date)} · {WEEKDAYS_EN[dayOfWeek(info.date)]}
@@ -409,7 +407,7 @@ export function Timeline({
         index,
         name: s.name,
         days: s.days,
-        calendarLabel: s.calendar === CALENDAR_DAYS || !country ? '暦日' : `${country.code}営業日`,
+        calendarLabel: s.calendar === CALENDAR_DAYS || !country ? '暦日' : `${country.info.nameJa}の営業日`,
         startIndex: Math.max(0, diffDays(rangeStart, s.start)),
         endIndex: Math.min(lastIndex, diffDays(rangeStart, s.end)),
         skipped: s.skippedDays.map((d) => diffDays(rangeStart, d)).filter((i) => i >= 0 && i <= lastIndex),

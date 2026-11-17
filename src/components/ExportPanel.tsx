@@ -8,6 +8,7 @@ import { renderExport, type ExportOptions, type MeetingSuggestion } from '../uti
 import { toReportCountry, type ScheduleReport } from '../utils/report'
 import { findUpcomingMeetingDays } from '../utils/timezone'
 import { btn, cx, inputClass, labelClass } from './classes'
+import { CountryFlag } from './CountryFlag'
 import { Card, Segmented } from './ui'
 
 interface ExportPanelProps {
@@ -185,9 +186,13 @@ export function ExportPanel({
             <label className={labelClass} htmlFor="exp-recipient-country">
               相手国（祝日・会議候補に使用）
             </label>
+            <div className="relative">
+            {recipient && !recipient.isBase && (
+              <CountryFlag code={recipient.code} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2" />
+            )}
             <select
               id="exp-recipient-country"
-              className={inputClass}
+              className={cx(inputClass, recipient && !recipient.isBase && 'pl-10')}
               value={countries.some((c) => !c.isBase && c.code === options.recipientCountry) ? options.recipientCountry : ''}
               onChange={(e) => onOptionsChange({ recipientCountry: e.target.value })}
             >
@@ -196,10 +201,11 @@ export function ExportPanel({
                 .filter((c) => !c.isBase)
                 .map((c) => (
                   <option key={c.code} value={c.code}>
-                    {c.info.flag} {c.info.nameJa}（{c.code}）
+                    {c.info.nameJa}
                   </option>
                 ))}
             </select>
+            </div>
           </div>
           <div className="space-y-2 rounded-xl bg-slate-50 p-3">
             <Checkbox checked={options.includeLocalNames} onChange={(v) => onOptionsChange({ includeLocalNames: v })}>

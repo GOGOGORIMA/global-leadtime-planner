@@ -8,6 +8,7 @@ import {
   getDefaultWeekend,
   getTimeZoneOptions,
 } from '../data/countries'
+import { getFlagUrl } from '../data/flags'
 import { buildCountryCalendar, resolveCountry } from './calendars'
 import { getDayStatus } from './dateCalc'
 import { getHolidayRegions, getHolidaysInRange, getHolidaysOn, getLocalHolidayLanguage, isBlockingHoliday } from './holidays'
@@ -66,12 +67,22 @@ describe('country catalog', () => {
     const catalog = getCountryCatalog()
     expect(catalog.length).toBeGreaterThan(200)
     expect(DEFAULT_BASE_COUNTRY).toBe('JP')
-    expect([...PRESET_PARTNER_COUNTRIES]).toEqual(['KR', 'TH', 'MY', 'VN', 'ID', 'KE', 'ZA', 'NG', 'US', 'DE', 'AE'])
+    expect([...PRESET_PARTNER_COUNTRIES]).toEqual(['KR', 'TW', 'CN', 'US', 'TH', 'MY', 'IN', 'VN', 'SG'])
+    expect(PRESET_PARTNER_COUNTRIES.map((code) => getCountryInfo(code).nameJa)).toEqual([
+      '韓国',
+      '台湾',
+      '中国',
+      'アメリカ',
+      'タイ',
+      'マレーシア',
+      'インド',
+      'ベトナム',
+      'シンガポール',
+    ])
     for (const code of [DEFAULT_BASE_COUNTRY, ...PRESET_PARTNER_COUNTRIES]) {
       const info = getCountryInfo(code)
       expect(info.hasHolidayData).toBe(true)
       expect(info.nameEn).not.toBe(code)
-      expect(info.flag).toHaveLength(4) // two regional-indicator code points (surrogate pairs)
     }
     expect(getCountryInfo('KR').nameJa).toBe('韓国')
     expect(getCountryInfo('US').nameEn).toBe('United States')
@@ -165,5 +176,44 @@ describe('holiday corrections — UAE (Cabinet Resolution No. 27 of 2024)', () =
     expect(getHolidaysOn('BH', undefined, '2026-05-26')[0]).toMatchObject({ name: 'Arafat Day', corrected: false })
     expect(getHolidaysInRange('SA', undefined, '2026-01-01', '2026-12-31').every((h) => !h.corrected)).toBe(true)
     expect(getHolidaysOn('JP', undefined, '2026-11-23')[0].corrected).toBe(false)
+  })
+})
+
+describe('flags and names shown in the UI', () => {
+  it('has a local SVG flag for every selectable country (no emoji, no CDN)', () => {
+    const missing = getCountryCatalog().filter((c) => !getFlagUrl(c.code))
+    expect(missing.map((c) => c.code)).toEqual([])
+    expect(getFlagUrl('TW')).toMatch(/tw\.svg/)
+  })
+
+  it('has unique Japanese names, so dropdowns can show names without country codes', () => {
+    const names = getCountryCatalog().map((c) => c.nameJa)
+    expect(new Set(names).size).toBe(names.length)
+    expect(getCountryCatalog().filter((c) => c.nameJa === c.code)).toEqual([])
+  })
+})
+
+describe('Taiwan and India', () => {
+  it('resolves Taiwan to Asia/Taipei (UTC+8) with Taiwanese holidays', () => {
+    const tw = resolveCountry('TW', undefined)
+    expect(tw.timeZone).toBe('Asia/Taipei')
+    expect(tw.weekend).toEqual([0, 6])
+    // Lunar New Year 2026: eve (16 Feb) to 20 Feb, plus the compensatory day date-holidays adds (21 Feb).
+    for (const date of ['2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20']) {
+      expect(isBlockingHoliday('TW', undefined, date)).toBe(true)
+    }
+    expect(getHolidaysOn('TW', undefined, '2026-10-10')[0]).toMatchObject({ name: 'National Day / Double Tenth Day', blocking: true })
+    expect(getHolidaysOn('TW', undefined, '2026-04-06')[0]).toMatchObject({ substitute: true, blocking: true }) // Tomb Sweeping Day (Sun) → Mon
+    expect(getLocalHolidayLanguage('TW')).toBe('zh')
+  })
+
+  it('resolves India to Asia/Kolkata (UTC+5:30) with national holidays', () => {
+    const india = resolveCountry('IN', undefined)
+    expect(india.timeZone).toBe('Asia/Kolkata')
+    expect(india.weekend).toEqual([0, 6])
+    expect(getHolidaysOn('IN', undefined, '2026-01-26')[0]).toMatchObject({ name: 'Republic Day', blocking: true })
+    expect(isBlockingHoliday('IN', undefined, '2026-08-15')).toBe(true) // Independence Day
+    expect(isBlockingHoliday('IN', undefined, '2026-10-02')).toBe(true) // Gandhi Jayanti
+    expect(isBlockingHoliday('IN', undefined, '2026-10-05')).toBe(false)
   })
 })

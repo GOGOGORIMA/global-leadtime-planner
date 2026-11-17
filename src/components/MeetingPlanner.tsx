@@ -29,7 +29,8 @@ import {
   type Interval,
 } from '../utils/timezone'
 import { btn, cx, inputClass } from './classes'
-import { Badge, Card, Flag, type Tone } from './ui'
+import { CountryFlag } from './CountryFlag'
+import { Badge, Card, type Tone } from './ui'
 
 const HOUR_MS = 3_600_000
 
@@ -159,7 +160,7 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
         onMouseLeave={() => setHover(null)}
       >
         {/* Hour scale */}
-        <div className="grid grid-cols-1 gap-x-4 md:grid-cols-[15rem_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-x-4 md:grid-cols-[18rem_minmax(0,1fr)]">
           <div className="hidden text-xs font-medium text-slate-500 md:block">
             {formatJaDate(date)} の {base.info.nameJa}時間
           </div>
@@ -187,9 +188,9 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
             const status = nowStatus(country, calendarOf(country.code), now)
             const offset = formatUtcOffset(getTimeZoneOffset(now, country.timeZone))
             return (
-              <li key={country.code} className="grid grid-cols-1 items-center gap-x-4 gap-y-1 py-2 md:grid-cols-[15rem_minmax(0,1fr)]">
+              <li key={country.code} className="grid grid-cols-1 items-center gap-x-4 gap-y-1 py-2 md:grid-cols-[18rem_minmax(0,1fr)]">
                 <div className="flex min-w-0 items-center gap-2">
-                  <Flag flag={country.info.flag} className="text-xl" />
+                  <CountryFlag code={country.code} />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="truncate text-sm font-medium text-slate-800">{country.info.nameJa}</span>
@@ -270,7 +271,7 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
             )
           })}
 
-          <li className="grid grid-cols-1 items-center gap-x-4 gap-y-1 py-2.5 md:grid-cols-[15rem_minmax(0,1fr)]">
+          <li className="grid grid-cols-1 items-center gap-x-4 gap-y-1 py-2.5 md:grid-cols-[18rem_minmax(0,1fr)]">
             <div className="flex items-center gap-2">
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-600 text-white">
                 <Users size={15} />
@@ -327,7 +328,7 @@ export function MeetingPlanner({ countries, calendars, date, today, onDateChange
                   local.minutes < country.workEnd
                 return (
                   <div key={country.code} className="flex items-center gap-1.5 py-0.5">
-                    <Flag flag={country.info.flag} />
+                    <CountryFlag code={country.code} size="sm" />
                     <span className="w-20 truncate text-slate-600">{country.info.nameJa}</span>
                     <span className="font-semibold text-slate-900 tabular-nums">{formatInstantClock(hover.instant, country.timeZone)}</span>
                     <span className="text-slate-400">{formatJaDate(local.date, { year: false })}</span>

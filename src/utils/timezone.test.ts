@@ -66,7 +66,11 @@ describe('zone conversions', () => {
     expect(getTimeZoneAbbreviation('America/New_York', winter)).toBe('EST')
     expect(getTimeZoneAbbreviation('America/New_York', Date.UTC(2026, 6, 15))).toBe('EDT')
     expect(getTimeZoneAbbreviation('Europe/Berlin', winter)).toBe('CET')
-    expect(getTimeZoneAbbreviation('Asia/Shanghai', winter)).toBe('UTC+8')
+    expect(getTimeZoneAbbreviation('Asia/Shanghai', winter)).toBe('CST')
+    expect(getTimeZoneAbbreviation('Asia/Taipei', winter)).toBe('CST')
+    expect(getTimeZoneAbbreviation('Asia/Kolkata', winter)).toBe('IST')
+    expect(getTimeZoneAbbreviation('Asia/Singapore', winter)).toBe('SGT')
+    expect(getTimeZoneAbbreviation('Asia/Ho_Chi_Minh', winter)).toBe('ICT')
   })
 })
 
@@ -82,6 +86,22 @@ describe('business-hour overlap', () => {
   it('computes the JP–DE overlap in winter (17:00–18:00 JST)', () => {
     const common = findCommonIntervals(window, [person('Asia/Tokyo'), person('Europe/Berlin')])
     expect(common).toEqual([{ start: Date.UTC(2026, 10, 18, 8), end: Date.UTC(2026, 10, 18, 9) }])
+  })
+
+  it('handles the 30-minute offset of India (09:00–18:00 IST = 12:30–21:30 JST)', () => {
+    const slots = getBusinessSlots(window, person('Asia/Kolkata'))
+    expect(slots).toEqual([
+      { start: Date.UTC(2026, 10, 18, 3, 30), end: Date.UTC(2026, 10, 18, 12, 30), localDate: '2026-11-18', working: true },
+    ])
+    const common = findCommonIntervals(window, [person('Asia/Tokyo'), person('Asia/Kolkata')])
+    expect(common).toEqual([{ start: Date.UTC(2026, 10, 18, 3, 30), end: Date.UTC(2026, 10, 18, 9) }])
+    expect(totalMinutes(common)).toBe(5.5 * 60)
+    expect(formatInstantClock(window.start, 'Asia/Kolkata')).toBe('20:30')
+  })
+
+  it('computes the JP–TW overlap (Taiwan is one hour behind: 10:00–18:00 JST)', () => {
+    const common = findCommonIntervals(window, [person('Asia/Tokyo'), person('Asia/Taipei')])
+    expect(totalMinutes(common)).toBe(8 * 60)
   })
 
   it('finds no overlap between Tokyo and New York office hours', () => {

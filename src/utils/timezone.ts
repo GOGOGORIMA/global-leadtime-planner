@@ -124,11 +124,15 @@ export function formatInstantClock(instant: number, timeZone: string): string {
 
 /**
  * Well-known abbreviations for zones without daylight saving time. Zones with DST (US, EU, …) get
- * their abbreviation from `Intl` (EST/EDT, CET/CEST, …); ambiguous ones fall back to `UTC±h`.
+ * their abbreviation from `Intl` (EST/EDT, CET/CEST, …); zones without a common name fall back to
+ * `UTC±h`. China and Taiwan use "CST" (China Standard Time / Chungyuan Standard Time) as is usual
+ * in Asian business correspondence.
  */
 const FIXED_ABBREVIATIONS: Record<string, string> = {
   'Asia/Tokyo': 'JST',
   'Asia/Seoul': 'KST',
+  'Asia/Shanghai': 'CST',
+  'Asia/Taipei': 'CST',
   'Asia/Hong_Kong': 'HKT',
   'Asia/Singapore': 'SGT',
   'Asia/Kuala_Lumpur': 'MYT',

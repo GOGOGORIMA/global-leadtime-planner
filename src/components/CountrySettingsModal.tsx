@@ -14,7 +14,8 @@ import type { ResolvedCountry } from '../utils/calendars'
 import { WEEKDAYS_JA, formatWeekendJa } from '../utils/dateFormat'
 import { formatClock, formatUtcOffset, getTimeZoneOffset, parseClock, timeZoneCity } from '../utils/timezone'
 import { btn, cx, inputClass, labelClass } from './classes'
-import { Badge, Flag, Modal } from './ui'
+import { CountryFlag } from './CountryFlag'
+import { Badge, Modal } from './ui'
 
 interface CountrySettingsModalProps {
   country: ResolvedCountry | null
@@ -62,8 +63,8 @@ export function CountrySettingsModal({ country, settings, now, onChange, onReset
       onClose={onClose}
       title={
         <span className="flex items-center gap-2">
-          <Flag flag={country.info.flag} className="text-xl" />
-          {country.info.nameJa}（{country.code}）の設定
+          <CountryFlag code={country.code} size="lg" />
+          {country.info.nameJa} の設定
           {country.isBase && <Badge tone="indigo">基準国</Badge>}
         </span>
       }
@@ -113,7 +114,7 @@ export function CountrySettingsModal({ country, settings, now, onChange, onReset
               <option value="">全国（国の祝日のみ）</option>
               {regions.map((r) => (
                 <option key={r.code} value={r.code}>
-                  {r.name}（{r.code}）
+                  {r.name}
                 </option>
               ))}
             </select>

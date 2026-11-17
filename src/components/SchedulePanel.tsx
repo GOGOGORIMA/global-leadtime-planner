@@ -5,6 +5,7 @@ import {
   Calculator,
   CalendarCheck,
   CalendarClock,
+  CalendarDays,
   LayoutTemplate,
   Minus,
   Plus,
@@ -26,7 +27,8 @@ import {
 import { formatJaDate } from '../utils/dateFormat'
 import type { ReportStep, ScheduleReport } from '../utils/report'
 import { btn, cx, inputClass, labelClass } from './classes'
-import { Badge, Card, Flag, Segmented } from './ui'
+import { CountryFlag } from './CountryFlag'
+import { Badge, Card, Segmented } from './ui'
 import { stepColor } from './styles'
 
 interface SchedulePanelProps {
@@ -182,17 +184,28 @@ function StepRow({
         <div className="col-span-5 md:col-span-2">
           <DaysInput value={step.days} label={`STEP ${index + 1} の所要日数`} onChange={(days) => update({ days })} />
         </div>
-        <div className="col-span-7 md:col-span-4">
+        <div className="relative col-span-7 md:col-span-4">
+          {step.calendar === CALENDAR_DAYS ? (
+            <CalendarDays
+              size={16}
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-500"
+            />
+          ) : (
+            <CountryFlag
+              code={step.calendar}
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
+            />
+          )}
           <select
             aria-label={`STEP ${index + 1} の適用カレンダー`}
-            className={inputClass}
+            className={cx(inputClass, 'pl-10')}
             value={step.calendar}
             onChange={(e) => update({ calendar: e.target.value })}
           >
-            <option value={CALENDAR_DAYS}>📅 暦日（土日祝も稼働）</option>
+            <option value={CALENDAR_DAYS}>暦日（土日祝も稼働）</option>
             {countries.map((c) => (
               <option key={c.code} value={c.code}>
-                {c.info.flag} {c.code} 営業日（{c.info.nameJa}）
+                {c.info.nameJa}の営業日
               </option>
             ))}
           </select>
@@ -393,7 +406,7 @@ export function SchedulePanel({ state, dispatch, countries, schedule, report, to
               <SummaryTile
                 tone={deadlinePassed ? 'rose' : 'indigo'}
                 icon={<CalendarClock size={14} />}
-                label={`発注デッドライン（${base.code}営業日・${base.info.nameJa}時間）`}
+                label={`発注デッドライン（${base.info.nameJa}の営業日・${base.info.nameJa}時間）`}
                 value={formatJaDate(report.orderDeadline)}
                 sub={
                   deadlinePassed ? (
@@ -454,8 +467,9 @@ export function SchedulePanel({ state, dispatch, countries, schedule, report, to
                     <span className="min-w-0 flex-1 truncate text-slate-700" title={s.name}>
                       {s.name}
                     </span>
-                    <span className="shrink-0 text-slate-400">
-                      {country ? <Flag flag={country.info.flag} /> : '📅'} {s.days}日
+                    <span className="flex shrink-0 items-center gap-1 text-slate-400">
+                      {country ? <CountryFlag code={country.code} size="sm" /> : <CalendarDays size={13} />}
+                      {s.days}日
                     </span>
                     <span className="shrink-0 font-medium text-slate-800 tabular-nums">
                       {formatJaDate(s.start, { year: false, weekday: false })}–{formatJaDate(s.end, { year: false, weekday: false })}

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "date-holidays": "^3.39.2",
+    "flag-icons": "^7.6.0",
     "lucide-react": "^1.74.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
