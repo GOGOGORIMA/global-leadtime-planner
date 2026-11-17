@@ -10,9 +10,12 @@
  *   afternoon) are kept for information but do not block a working day.
  * - English and local-language names are matched by `date + rule` (index matching is unsafe
  *   because each language list may contain different observances).
+ * - Countries listed in `data/holidayCorrections.ts` get their upstream rules corrected to the
+ *   official list (e.g. the UAE); the resulting entries are flagged `corrected`.
  */
 import Holidays from 'date-holidays'
 import type { HolidaysTypes } from 'date-holidays'
+import { HOLIDAY_CORRECTIONS } from '../data/holidayCorrections'
 import { addDays, eachDay, isISODate, yearOf, type ISODate } from './dateCalc'
 
 export type HolidayType = HolidaysTypes.HolidayType
@@ -31,6 +34,8 @@ export interface HolidayEntry {
   partial: boolean
   /** date-holidays rule — stable identifier used for de-duplication. */
   rule: string
+  /** Produced or changed by a local correction (`data/holidayCorrections.ts`). */
+  corrected: boolean
 }
 
 /** Holiday types that make a full day non-working. */
@@ -71,6 +76,14 @@ function isValidRegion(code: string, region: string | undefined): region is stri
 
 const instanceCache = new Map<string, Holidays | null>()
 
+/** Applies `HOLIDAY_CORRECTIONS[code]` to a freshly created instance (instances are independent). */
+function applyCorrections(instance: Holidays, code: string): void {
+  const correction = HOLIDAY_CORRECTIONS[code]
+  if (!correction) return
+  for (const rule of correction.remove ?? []) instance.unsetRule(rule)
+  for (const def of correction.set ?? []) instance.setHoliday(def.rule, { name: { ...def.name }, type: def.type })
+}
+
 function getInstance(code: string, region?: string): Holidays | null {
   const validRegion = isValidRegion(code, region) ? region : undefined
   const key = validRegion ? `${code}-${validRegion}` : code
@@ -80,6 +93,7 @@ function getInstance(code: string, region?: string): Holidays | null {
   if (hasHolidayData(code)) {
     try {
       instance = validRegion ? new Holidays(code, validRegion) : new Holidays(code)
+      applyCorrections(instance, code)
     } catch {
       instance = null
     }
@@ -107,7 +121,16 @@ function buildYearMap(code: string, region: string | undefined, year: number): Y
   const map = new Map<ISODate, HolidayEntry[]>()
   if (!instance) return map
 
-  const english = instance.getHolidays(year, 'en')
+  const correctionRules = HOLIDAY_CORRECTIONS[code]?.set ?? []
+  const correctedRules = new Set(correctionRules.map((d) => d.rule))
+  const allEnglish = instance.getHolidays(year, 'en')
+  // Conditional corrections (e.g. "30 Ramadan") are dropped when they coincide with their anchor.
+  const english = allEnglish.filter((h) => {
+    const anchor = correctionRules.find((d) => d.rule === h.rule)?.onlyIfDistinctFrom
+    if (!anchor) return true
+    const day = h.date.slice(0, 10)
+    return !allEnglish.some((other) => other.rule === anchor && other.date.slice(0, 10) === day)
+  })
   const localLanguage = getLocalHolidayLanguage(code)
   const localNames = new Map<string, string>()
   if (localLanguage) {
@@ -131,6 +154,7 @@ function buildYearMap(code: string, region: string | undefined, year: number): Y
         blocking: !partial && BLOCKING_HOLIDAY_TYPES.has(h.type),
         partial,
         rule: h.rule,
+        corrected: correctedRules.has(h.rule),
       }
       const list = map.get(date)
       if (list) {

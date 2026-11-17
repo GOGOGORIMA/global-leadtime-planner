@@ -30,6 +30,7 @@ import {
   type WorkCalendar,
 } from '../utils/dateCalc'
 import { WEEKDAYS_EN, WEEKDAYS_JA, formatEnglishDate, formatJaDate, formatJaMonth } from '../utils/dateFormat'
+import { getHolidayCorrection } from '../data/holidayCorrections'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { CustomHolidayManager } from './CustomHolidayManager'
 import { DAY_STATUS_STYLES, stepColor } from './styles'
@@ -293,6 +294,7 @@ function Tooltip({
 }) {
   const blocking = info.holidays.filter((h) => h.blocking)
   const informational = info.holidays.filter((h) => !h.blocking)
+  const correctionNote = getHolidayCorrection(country.code)?.note
   const style = DAY_STATUS_STYLES[info.status]
   const viewport = typeof document !== 'undefined' ? document.documentElement.clientWidth : 1200
   return (
@@ -321,7 +323,12 @@ function Tooltip({
         <ul className="mt-2 space-y-1">
           {blocking.map((h) => (
             <li key={h.rule + h.name}>
-              <div className="font-medium text-rose-700">{h.name}</div>
+              <div className="flex items-center gap-1 font-medium text-rose-700">
+                {h.name}
+                {h.corrected && (
+                  <span className="rounded bg-amber-100 px-1 text-[9px] font-semibold text-amber-800">補正</span>
+                )}
+              </div>
               {h.localName && <div className="text-slate-600">{h.localName}</div>}
               <div className="text-[10px] text-slate-400">
                 {h.type === 'bank' ? 'Bank holiday' : 'Public holiday'}
@@ -333,8 +340,11 @@ function Tooltip({
       )}
       {informational.length > 0 && (
         <div className="mt-2 border-t border-slate-100 pt-1.5 text-[11px] text-slate-500">
-          参考（休業扱いなし）: {informational.map((h) => h.localName ?? h.name).join(' / ')}
+          参考（休業扱いなし）: {informational.map((h) => (h.localName ? `${h.name}（${h.localName}）` : h.name)).join(' / ')}
         </div>
+      )}
+      {info.holidays.some((h) => h.corrected) && correctionNote && (
+        <div className="mt-1.5 text-[10px] leading-snug text-amber-700">※ {correctionNote}</div>
       )}
       <div className="mt-2 flex items-center gap-1 text-[10px] font-medium text-indigo-600">
         <MousePointerClick size={12} />

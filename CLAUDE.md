@@ -40,6 +40,7 @@ src/
   index.css                Tailwind 読み込み・テーマ・独自ユーティリティ
   types.ts                 PlannerState / Step / CountrySettings / DayOverride / CALENDAR_DAYS
   data/countries.ts        国カタログ（名称 EN/JA・国旗・既定 TZ・既定週末・地域）とプリセット
+  data/holidayCorrections.ts  date-holidays と公式祝日一覧の差分補正（現在は AE。出典付き）
   state/defaults.ts        初期状態・工程テンプレート・工程名候補・ID 生成・上限値
   state/plannerReducer.ts  useReducer 用リデューサと sanitizeState（URL 等の外部入力を安全化）
   hooks/usePlanner.ts      状態 ⇄ URL クエリ（replaceState, 250ms debounce）⇄ LocalStorage（前回状態）
@@ -86,6 +87,11 @@ src/
   14:00 開始などの半日祝日（例: DE のクリスマスイブ、CN の婦人節）や `observance` / `optional` / `school` は参考表示のみ。
 - 複数日祝日（KR 설날 P3D、VN Tết P5D、イード等）は日ごとに展開。年末開始で翌年にまたがる分（1/1〜1/14）は前年データも参照。
 - 地域（州）を選ぶと `new Holidays(country, state)` で地域祝日を追加。
+- **祝日の補正**：`data/holidayCorrections.ts` に登録された国は、date-holidays のインスタンス生成時にルールを
+  `remove`（削除）/ `set`（追加・上書き、date-holidays のルール文法）で公式一覧に合わせる。他国のインスタンスには影響しない。
+  `onlyIfDistinctFrom` は、生成日が指定ルールの祝日と同じ日なら捨てる条件（例: 29 日で終わるラマダンでは date-holidays が
+  「30 Ramadan」を 1 Shawwal に重ねるため）。補正由来の祝日は `HolidayEntry.corrected = true` となり、ツールチップに「補正」、
+  国設定ダイアログに出典が表示される。補正を追加するときは出典（法令・政府サイト）を必ず記載し、テストを書く。
 
 ### 工程スケジュール（`computeSchedule`）
 - 工程は finish-to-start。各工程は「前工程終了の翌日」から、**その工程のカレンダーの次の稼働日**に開始し、`days` 稼働日を占有する（開始日を 1 日目と数える）。
@@ -136,7 +142,7 @@ src/
 
 ## テスト
 
-`src/utils/*.test.ts`（58 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット国（UAE の週末・複数日のイードを含む）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
+`src/utils/*.test.ts`（63 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット国（UAE の週末・複数日のイードを含む）、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力、リデューサ、英文出力。
 
 ## デプロイ
 
@@ -159,7 +165,10 @@ src/
 ## 注意点・既知の制約
 
 - 祝日データは date-holidays に依存（参考情報）。イスラム暦の祝日は計算値のため公式発表と 1 日ずれる場合がある。
-  UAE（AE）のデータは公式の祝日一覧と差異がある可能性あり（例: "First day of Ramadan"・"Laylat al-Miʿraj" が public、
-  Arafat Day や National Day 2 日目が未収録）。運用前に当年の公式発表と照合し、カスタム休日/臨時稼働日で調整する。中国の振替出勤日（调休）や日本企業の年末年始休業（12/29〜）などは含まれないため、カスタム休日/臨時稼働日で補う。
+  UAE（AE）は閣議決定 2024 年第 27 号（u.ae の公式祝日一覧）に合わせて補正済み：ラマダン初日・イスラーとミウラージュの夜は
+  休業扱いしない（参考表示のみ）、ラマダンが 30 日の年は 30 日目もイード・アル＝フィトル休暇、アラファの日（9 Dhu al-Hijjah）を追加、
+  National Day は 12/2–3 の 2 日間（12/1 の Commemoration Day は休日ではない）。ただし閣議による年ごとの振替
+  （例: 2025 年の National Day は 12/1–2 に移動）と、月の目視による 1 日のずれは反映できないため、公式発表に合わせて
+  カスタム休日/臨時稼働日で調整する。中国の振替出勤日（调休）や日本企業の年末年始休業（12/29〜）などは含まれないため、カスタム休日/臨時稼働日で補う。
 - 工程名・カスタム休日名は英文メールにそのまま入るため英語推奨（UI 上に候補リストあり）。
 - `useNow` は分単位で更新。現在時刻表示以外の計算は `today`（基準国 TZ の日付）に依存する。
