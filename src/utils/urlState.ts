@@ -12,11 +12,17 @@
  *   &rg=MY:10                                ← holiday region (state / province)
  *   &off=TH:2027-02-16..2027-02-18:Chinese+New+Year   ← custom days off (range + optional label)
  *   &work=JP:2026-12-26                      ← custom working days
- *   &tab=calendar                            ← open tab (meeting | schedule | calendar | export)
+ *   &tab=calendar                            ← open tab (meeting | schedule | calendar | export | vanning)
+ *   &ct=20dc                                 ← loading simulator: container / truck (20dc 40dc 40hc 2t 4t 10t)
+ *   &cg=1100x1100x1000_300_6_sr_f59e0b_Case+%232   ← cargo `{L}x{W}x{H}_{kg}_{qty}_{flags}_{color}_{name}`
+ *                                               (flags: s = stackable, r = 90° turn allowed, - = none;
+ *                                                `cg=-` = empty cargo list)
  */
+import { isContainerId } from '../data/containers'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
+  type CargoItem,
   type CountrySettings,
   type DayOverride,
   type PlannerState,
@@ -33,7 +39,8 @@ const STEP_CALENDAR_TOKEN = 'cal'
 const MAX_RANGE_DAYS = 400
 
 /** Keys that mark a query string as carrying planner state. */
-const STATE_KEYS = ['base', 'c', 's', 'd', 'mode']
+const STATE_KEYS = ['base', 'c', 's', 'd', 'mode', 'ct', 'cg']
+const EMPTY_CARGO_TOKEN = '-'
 
 function hhmm(minutes: number): string {
   return formatClock(minutes).replace(':', '')
@@ -80,8 +87,43 @@ export function serializeState(state: PlannerState): string {
       params.append(range.kind, `${code}:${dates}${range.label ? `:${range.label}` : ''}`)
     }
   }
+  params.set('ct', state.container)
+  if (state.cargo.length === 0) params.append('cg', EMPTY_CARGO_TOKEN)
+  for (const item of state.cargo) params.append('cg', serializeCargo(item))
   params.set('tab', state.tab)
   return params.toString()
+}
+
+/** `1100x1100x1000_300_6_sr_f59e0b_Case #2` (the name goes last so it may contain `_`). */
+function serializeCargo(item: CargoItem): string {
+  const flags = `${item.stackable ? 's' : ''}${item.rotatable ? 'r' : ''}` || '-'
+  const weight = String(Math.round(item.weight * 10) / 10)
+  return `${item.length}x${item.width}x${item.height}_${weight}_${item.quantity}_${flags}_${item.color.replace('#', '')}_${item.name}`
+}
+
+function parseCargo(value: string): Partial<CargoItem> | null {
+  const parts: string[] = []
+  let rest = value
+  for (let i = 0; i < 5; i++) {
+    const index = rest.indexOf('_')
+    if (index < 0) return null
+    parts.push(rest.slice(0, index))
+    rest = rest.slice(index + 1)
+  }
+  const [dims, weight, quantity, flags, color] = parts
+  const m = /^(\d+)x(\d+)x(\d+)$/i.exec(dims)
+  if (!m) return null
+  return {
+    length: Number(m[1]),
+    width: Number(m[2]),
+    height: Number(m[3]),
+    weight: Number(weight),
+    quantity: Number(quantity),
+    stackable: flags.includes('s'),
+    rotatable: flags.includes('r'),
+    color: /^[0-9a-f]{6}$/i.test(color) ? `#${color}` : '',
+    name: rest,
+  }
 }
 
 /** The `tab` parameter alone (a link may open a tab without carrying planner state). */
@@ -193,8 +235,26 @@ export function parseState(search: string, fallback: PlannerState): ParsedUrlSta
     }
   }
 
+  const containerParam = params.get('ct')
+  const container = isContainerId(containerParam) ? containerParam : fallback.container
+  const cargoValues = params.getAll('cg')
+  const cargo = cargoValues.length
+    ? cargoValues.map(parseCargo).filter((c): c is Partial<CargoItem> => c !== null)
+    : fallback.cargo
+
   const state = sanitizeState(
-    { base, partners, settings, mode, anchor, steps: steps as Step[], overrides, tab: readTabParam(search) ?? fallback.tab },
+    {
+      base,
+      partners,
+      settings,
+      mode,
+      anchor,
+      steps: steps as Step[],
+      overrides,
+      tab: readTabParam(search) ?? fallback.tab,
+      container,
+      cargo: cargo as CargoItem[],
+    },
     fallback,
   )
   return { recognized: true, state }

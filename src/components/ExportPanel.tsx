@@ -1,5 +1,8 @@
 import { ArrowRight, CalendarClock, Check, Copy, ExternalLink, Mail, MessageCircle, type LucideIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
+import { getContainerSpec, type ContainerId } from '../data/containers'
+import type { CargoItem } from '../types'
+import { buildPackingSummary } from '../utils/binPacking'
 import type { ResolvedCountry } from '../utils/calendars'
 import { toParticipant } from '../utils/calendars'
 import { copyToClipboard } from '../utils/clipboard'
@@ -27,10 +30,15 @@ interface ExportPanelProps {
   today: ISODate
   /** Date picked in the meeting tab (`null` = today). Meeting proposals start there when it is after today. */
   meetingDate: ISODate | null
+  /** Loading simulator data (tab ⑤) for the optional Packing & Container Summary. */
+  cargo: readonly CargoItem[]
+  container: ContainerId
   options: ExportOptions
   onOptionsChange: (patch: Partial<ExportOptions>) => void
   /** Opens the meeting tab (会議可能時間帯). */
   onShowMeeting: () => void
+  /** Opens the loading simulator tab (積載3D). */
+  onShowVanning: () => void
 }
 
 const FORMATS: ReadonlyArray<{ value: ExportFormat; label: string; description: string; icon: LucideIcon }> = [
@@ -101,9 +109,12 @@ export function ExportPanel({
   recipientCountry,
   today,
   meetingDate,
+  cargo,
+  container,
   options,
   onOptionsChange,
   onShowMeeting,
+  onShowVanning,
 }: ExportPanelProps) {
   const [copied, setCopied] = useState(false)
   const base = countries[0]
@@ -130,12 +141,20 @@ export function ExportPanel({
     }
   }, [wantsMeeting, partner, base, calendars, meetingFrom])
 
+  // Packing & Container Summary (tab ⑤) — only computed when it is switched on.
+  const packing = useMemo(
+    () => (options.includePacking && !isMeeting ? buildPackingSummary(cargo, getContainerSpec(container)) : null),
+    [options.includePacking, isMeeting, cargo, container],
+  )
+
   const text = useMemo(() => {
     const exportOptions = { ...options, format }
     if (format === 'meeting') return meeting ? renderMeetingProposal(exportOptions, meeting, report) : ''
     if (!report) return ''
-    return format === 'whatsapp' ? renderWhatsApp(report, exportOptions, meeting) : renderEmail(report, exportOptions, meeting)
-  }, [report, options, format, meeting])
+    return format === 'whatsapp'
+      ? renderWhatsApp(report, exportOptions, meeting, packing)
+      : renderEmail(report, exportOptions, meeting, packing)
+  }, [report, options, format, meeting, packing])
 
   const copy = async () => {
     if (!text) return
@@ -317,6 +336,14 @@ export function ExportPanel({
                   </Checkbox>
                   {options.includeMeeting && !partner && (
                     <p className="text-xs text-amber-700">相手国（基準国以外）を選択すると会議候補を記載できます。</p>
+                  )}
+                  <Checkbox checked={options.includePacking} onChange={(v) => onOptionsChange({ includePacking: v })}>
+                    Packing &amp; Container Summary を追記（総容積・総重量・推奨コンテナ／トラック。「積載3D」タブの貨物リストから作成）
+                  </Checkbox>
+                  {options.includePacking && (
+                    <button type="button" className={cx(btn.ghost, '-ml-2 text-indigo-700')} onClick={onShowVanning}>
+                      積載シミュレーターで貨物を確認する <ArrowRight size={14} />
+                    </button>
                   )}
                 </div>
               </>

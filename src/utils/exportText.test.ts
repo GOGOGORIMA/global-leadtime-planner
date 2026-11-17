@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { CALENDAR_DAYS, type OverrideMap, type Step } from '../types'
 import { buildCalendarMap, makeCalendarResolver, resolveCountry } from './calendars'
 import { computeSchedule, type ScheduleMode } from './dateCalc'
+import { getContainerSpec } from '../data/containers'
+import { SAMPLE_CARGO, instantiateCargo } from '../state/defaults'
+import { buildPackingSummary } from './binPacking'
 import { DEFAULT_EXPORT_OPTIONS, renderEmail, renderMeetingProposal, renderWhatsApp, type ExportOptions } from './exportText'
 import { buildScheduleReport, type HolidayScope } from './report'
 
@@ -160,5 +163,50 @@ describe('Meeting Proposal', () => {
     })
     expect(text).toContain('As our business hours do not overlap (Japan: 09:00–18:00 JST, United States: 09:00–18:00 EST)')
     expect(text).not.toContain('1. ')
+  })
+})
+
+describe('Packing & Container Summary', () => {
+  const packing = buildPackingSummary(instantiateCargo(SAMPLE_CARGO), getContainerSpec('20dc'))
+
+  it('adds the packing section to the e-mail only when requested', () => {
+    const report = makeReport('backward', '2026-12-14')
+    expect(renderEmail(report, options(), undefined, packing)).not.toContain('PACKING & CONTAINER SUMMARY')
+    const text = renderEmail(report, options({ includePacking: true }), undefined, packing)
+    const section = text.slice(text.indexOf('PACKING & CONTAINER SUMMARY'), text.indexOf('Please note that'))
+    expect(section.trim().split('\n')).toEqual([
+      'PACKING & CONTAINER SUMMARY',
+      '- Packages: 31 pcs (3 types)',
+      '- Total volume: 15.5 m³',
+      '- Total gross weight: 3,160 kg',
+      '- Largest package: 2,200 × 1,500 × 1,800 mm (Case #1 Main Unit (Crate))',
+      '- Non-stackable: 1 pc (no top load)',
+      '- Recommended equipment (sea): 1 × 20ft Dry container',
+      '- Recommended equipment (road): 1 × 4-ton truck (wide body)',
+      '- Loading plan (20ft Dry container): all 31 pcs fit – 46.7% of volume, 13.2% of max. payload',
+      'Package list:',
+      '1. Case #1 Main Unit (Crate): 2,200 × 1,500 × 1,800 mm, 1,000 kg × 1 (non-stackable)',
+      '2. Case #2 Accessories (Pallet): 1,100 × 1,100 × 1,000 mm, 300 kg × 6',
+      '3. Case #3 Spare Parts (Carton): 600 × 400 × 400 mm, 15 kg × 24',
+      'Note: the loading plan is an estimate based on the package dimensions and weights above.',
+    ])
+  })
+
+  it('adds a short packing summary to WhatsApp', () => {
+    const text = renderWhatsApp(makeReport('backward', '2026-12-14'), options({ format: 'whatsapp', includePacking: true }), undefined, packing)
+    expect(text).toContain('*Packing summary*\n📦 31 pcs · 15.5 m³ · 3,160 kg\n🚢 Sea: 1 × 20ft Dry container\n🚚 Road: 1 × 4-ton truck (wide body)')
+  })
+
+  it('explains when standard equipment cannot carry a package', () => {
+    const tall = buildPackingSummary(
+      [{ id: 'x', name: 'Tall unit', length: 1200, width: 1000, height: 2600, weight: 900, quantity: 1, stackable: false, rotatable: true, color: '#6366f1' }],
+      getContainerSpec('40hc'),
+    )
+    const text = renderEmail(makeReport('backward', '2026-12-14'), options({ includePacking: true }), undefined, tall)
+    expect(text).toContain(
+      '- Recommended equipment (sea): not possible in standard containers (a package exceeds the door height; special equipment such as open-top or flat-rack required)',
+    )
+    expect(text).toContain('- Recommended equipment (road): not possible by standard truck (a package exceeds the inside dimensions)')
+    expect(text).toContain('- Loading plan (40ft High Cube container): 0 of 1 pc fit – the remaining 1 pc requires additional space')
   })
 })
