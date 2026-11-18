@@ -1,11 +1,13 @@
 import type { ContainerCategory, ContainerId } from './data/containers'
+import type { QuoteCurrency } from './data/currencies'
 import type { ISODate, OverrideKind, ScheduleMode } from './utils/dateCalc'
+import type { FreightMarket, ShippingMode } from './utils/freightRates'
 
 /** Calendar id for steps counted in calendar days (every day is a working day). */
 export const CALENDAR_DAYS = 'calendar'
 
 /** Right-pane tabs (also the `?tab=` URL parameter). */
-export const PLANNER_TABS = ['meeting', 'schedule', 'calendar', 'export', 'vanning'] as const
+export const PLANNER_TABS = ['meeting', 'schedule', 'calendar', 'export', 'vanning', 'quote'] as const
 export type PlannerTab = (typeof PLANNER_TABS)[number]
 
 export function isPlannerTab(value: unknown): value is PlannerTab {
@@ -76,6 +78,61 @@ export interface CushionSettings {
   stackGap: number
 }
 
+/** An amount entered in JPY or USD (freight / destination charge overrides). */
+export interface MoneyAmount {
+  amount: number
+  currency: 'JPY' | 'USD'
+}
+
+/** A container / truck type and how many of them. */
+export interface UnitCount {
+  id: ContainerId
+  units: number
+}
+
+/**
+ * Export quotation board (tab ⑥). Percentages are stored as percent values (3 = 3 %).
+ * `null` means "automatic" (linked to the loading simulator or taken from the rate tables).
+ */
+export interface QuoteSettings {
+  /** EXW base price (JPY): the sales price ex works, export packing included. */
+  exw: number
+  currency: QuoteCurrency
+  /** Market rate: JPY per 1 unit of the quote currency (ignored for JPY). */
+  fxRate: number
+  /** FX safety buffer (%, 0–10): applied rate = market rate × (1 − buffer). */
+  fxBuffer: number
+  /** JPY per USD for USD freight / charges when the quote currency is not USD. */
+  usdRate: number
+  /** Domestic truck freight factory → port (JPY). */
+  domestic: number | null
+  /** Export clearance & port charges: THC / B/L / vanning (JPY). */
+  exportCharges: number | null
+  mode: ShippingMode
+  /** Destination country ('' = the schedule's partner country). */
+  destination: string
+  market: FreightMarket
+  /** Freight override, e.g. a forwarder's actual quote (`null` = table rate × market). */
+  freight: MoneyAmount | null
+  /** Freight contingency (%, 0–30) added to the market / override freight. */
+  freightBuffer: number
+  /** Marine insurance rate (%) on 110 % of CIF. */
+  insuranceRate: number
+  /** Destination port / import clearance / delivery charges (DAP). */
+  local: MoneyAmount | null
+  /** Import duty (%, 0–30) on CIF. */
+  dutyRate: number
+  /** Quotation validity (`null` = today + 14 days). */
+  validUntil: ISODate | null
+  /** Overrides of the cargo linked from the loading simulator. */
+  volume: number | null
+  weight: number | null
+  /** FCL containers (sea sizes only). */
+  container: UnitCount | null
+  /** Domestic trucks (truck sizes only). */
+  truck: UnitCount | null
+}
+
 export interface PlannerState {
   base: string
   partners: string[]
@@ -93,4 +150,6 @@ export interface PlannerState {
   cargo: CargoItem[]
   /** Loading simulator: cushioning / clearance per transport mode. */
   cushioning: Record<ContainerCategory, CushionSettings>
+  /** Export quotation board (tab ⑥). */
+  quote: QuoteSettings
 }

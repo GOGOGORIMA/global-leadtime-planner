@@ -1,7 +1,8 @@
-import { ArrowRight, CalendarClock, Check, Copy, ExternalLink, Mail, MessageCircle, type LucideIcon } from 'lucide-react'
+import { ArrowRight, CalendarClock, Check, Copy, ExternalLink, Mail, MessageCircle, ReceiptText, type LucideIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { getContainerSpec, type ContainerCategory, type ContainerId } from '../data/containers'
-import type { CargoItem, CushionSettings } from '../types'
+import { getCountryInfo } from '../data/countries'
+import type { CargoItem, CushionSettings, QuoteSettings } from '../types'
 import { buildPackingSummary, toClearance } from '../utils/binPacking'
 import type { ResolvedCountry } from '../utils/calendars'
 import { toParticipant } from '../utils/calendars'
@@ -11,11 +12,14 @@ import { formatJaDate } from '../utils/dateFormat'
 import {
   renderEmail,
   renderMeetingProposal,
+  renderQuotationEmail,
   renderWhatsApp,
   type ExportFormat,
   type ExportOptions,
   type MeetingSuggestion,
+  type QuotationText,
 } from '../utils/exportText'
+import { buildQuotation } from '../utils/quotation'
 import { toReportCountry, type ScheduleReport } from '../utils/report'
 import { findUpcomingMeetingDays, formatClock } from '../utils/timezone'
 import { btn, cx, focusRing, inputClass, labelClass } from './classes'
@@ -34,18 +38,29 @@ interface ExportPanelProps {
   cargo: readonly CargoItem[]
   container: ContainerId
   cushioning: Record<ContainerCategory, CushionSettings>
+  /** Quotation board (tab ⑥) for the Price Quotation format / section. */
+  quote: QuoteSettings
+  quoteDestination: string
   options: ExportOptions
   onOptionsChange: (patch: Partial<ExportOptions>) => void
   /** Opens the meeting tab (会議可能時間帯). */
   onShowMeeting: () => void
   /** Opens the loading simulator tab (積載3D). */
   onShowVanning: () => void
+  /** Opens the quotation board tab (輸出見積). */
+  onShowQuote: () => void
 }
 
 const FORMATS: ReadonlyArray<{ value: ExportFormat; label: string; description: string; icon: LucideIcon }> = [
   { value: 'email', label: 'Standard Email', description: '納期回答メール（工程の日程・除外した祝日・関係国の祝日）', icon: Mail },
   { value: 'whatsapp', label: 'WhatsApp / Chat', description: 'チャット向けの短い要約（太字・箇条書き）', icon: MessageCircle },
   { value: 'meeting', label: 'Meeting Proposal', description: '営業時間の重なりから会議の候補日時を打診', icon: CalendarClock },
+  {
+    value: 'quote',
+    label: 'Price Quotation',
+    description: 'Incoterms 別の提示価格（EXW / FOB / CIF / DDP）・M3・重量・有効期限・運賃免責',
+    icon: ReceiptText,
+  },
 ]
 
 const MEETING_CANDIDATES = 3
@@ -66,7 +81,7 @@ function Checkbox({ checked, onChange, children }: { checked: boolean; onChange:
 
 function FormatPicker({ value, onChange }: { value: ExportFormat; onChange: (format: ExportFormat) => void }) {
   return (
-    <div role="radiogroup" aria-label="出力形式" className="grid grid-cols-3 gap-2">
+    <div role="radiogroup" aria-label="出力形式" className="grid grid-cols-2 gap-2 @3xl:grid-cols-4">
       {FORMATS.map(({ value: format, label, description, icon: Icon }) => {
         const active = format === value
         return (
@@ -113,10 +128,13 @@ export function ExportPanel({
   cargo,
   container,
   cushioning,
+  quote,
+  quoteDestination,
   options,
   onOptionsChange,
   onShowMeeting,
   onShowVanning,
+  onShowQuote,
 }: ExportPanelProps) {
   const [copied, setCopied] = useState(false)
   const base = countries[0]
@@ -124,6 +142,7 @@ export function ExportPanel({
   const partner = recipient && !recipient.isBase ? recipient : undefined
   const format: ExportFormat = FORMATS.some((f) => f.value === options.format) ? options.format : 'email'
   const isMeeting = format === 'meeting'
+  const isQuote = format === 'quote'
 
   // Proposals start tomorrow (base time) so the recipient has time to reply; the meeting proposal
   // starts at the date picked in the meeting tab instead when that is later.
@@ -155,14 +174,27 @@ export function ExportPanel({
     [options.includePacking, isMeeting, cargo, container, cushioning],
   )
 
+  // Incoterms Price Quotation (tab ⑥) — stand-alone format, or a section of the e-mail / chat.
+  const quotation = useMemo<QuotationText | null>(
+    () =>
+      isQuote || (options.includeQuote && !isMeeting)
+        ? {
+            quote: buildQuotation(quote, cargo, container, cushioning, quoteDestination, today),
+            destinationName: getCountryInfo(quoteDestination).nameEn,
+          }
+        : null,
+    [isQuote, isMeeting, options.includeQuote, quote, cargo, container, cushioning, quoteDestination, today],
+  )
+
   const text = useMemo(() => {
     const exportOptions = { ...options, format }
     if (format === 'meeting') return meeting ? renderMeetingProposal(exportOptions, meeting, report) : ''
+    if (format === 'quote') return quotation ? renderQuotationEmail(exportOptions, quotation, report) : ''
     if (!report) return ''
     return format === 'whatsapp'
-      ? renderWhatsApp(report, exportOptions, meeting, packing)
-      : renderEmail(report, exportOptions, meeting, packing)
-  }, [report, options, format, meeting, packing])
+      ? renderWhatsApp(report, exportOptions, meeting, packing, quotation)
+      : renderEmail(report, exportOptions, meeting, packing, quotation)
+  }, [report, options, format, meeting, packing, quotation])
 
   const copy = async () => {
     if (!text) return
@@ -265,33 +297,55 @@ export function ExportPanel({
                 </select>
               </div>
             </div>
-            <div>
-              <label className={labelClass} htmlFor="exp-recipient-country">
-                相手国（{isMeeting ? '会議候補' : '祝日・会議候補'}に使用）
-              </label>
-              <div className="relative">
-                {partner && (
-                  <CountryFlag code={partner.code} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2" />
-                )}
-                <select
-                  id="exp-recipient-country"
-                  className={cx(inputClass, partner && 'pl-10')}
-                  value={countries.some((c) => !c.isBase && c.code === options.recipientCountry) ? options.recipientCountry : ''}
-                  onChange={(e) => onOptionsChange({ recipientCountry: e.target.value })}
-                >
-                  <option value="">自動（最終工程の国）{recipient ? `：${recipient.info.nameJa}` : ''}</option>
-                  {countries
-                    .filter((c) => !c.isBase)
-                    .map((c) => (
-                      <option key={c.code} value={c.code}>
-                        {c.info.nameJa}
-                      </option>
-                    ))}
-                </select>
+            {!isQuote && (
+              <div>
+                <label className={labelClass} htmlFor="exp-recipient-country">
+                  相手国（{isMeeting ? '会議候補' : '祝日・会議候補'}に使用）
+                </label>
+                <div className="relative">
+                  {partner && (
+                    <CountryFlag code={partner.code} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2" />
+                  )}
+                  <select
+                    id="exp-recipient-country"
+                    className={cx(inputClass, partner && 'pl-10')}
+                    value={countries.some((c) => !c.isBase && c.code === options.recipientCountry) ? options.recipientCountry : ''}
+                    onChange={(e) => onOptionsChange({ recipientCountry: e.target.value })}
+                  >
+                    <option value="">自動（最終工程の国）{recipient ? `：${recipient.info.nameJa}` : ''}</option>
+                    {countries
+                      .filter((c) => !c.isBase)
+                      .map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.info.nameJa}
+                        </option>
+                      ))}
+                  </select>
+                </div>
               </div>
-            </div>
+            )}
 
-            {isMeeting ? (
+            {isQuote ? (
+              <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                <p>
+                  「輸出見積」タブ（Incoterms 輸出見積・コスト積算ボード）の計算結果から、EXW / FOB / CIF / DDP の提示価格・貨物の容積と重量・見積有効期限・運賃変動の免責条項（Freight
+                  Disclaimer）を英文にします。
+                </p>
+                {quotation && (
+                  <p className="text-slate-500">
+                    仕向地：
+                    <span className="inline-flex items-center gap-1 align-[-2px] font-medium text-slate-700">
+                      <CountryFlag code={quoteDestination} size="sm" />
+                      {getCountryInfo(quoteDestination).nameJa}
+                    </span>
+                    ・提示通貨：{quotation.quote.currency}・有効期限：{formatJaDate(quotation.quote.validUntil)}
+                  </p>
+                )}
+                <button type="button" className={cx(btn.ghost, '-ml-2.5 text-indigo-700')} onClick={onShowQuote}>
+                  輸出見積ボードで確認する <ArrowRight size={14} />
+                </button>
+              </div>
+            ) : isMeeting ? (
               <div className="space-y-2 rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
                 <p>
                   <span className="font-semibold text-slate-800">{formatJaDate(meetingFrom)}</span>
@@ -351,6 +405,14 @@ export function ExportPanel({
                   {options.includePacking && (
                     <button type="button" className={cx(btn.ghost, '-ml-2 text-indigo-700')} onClick={onShowVanning}>
                       積載シミュレーターで貨物を確認する <ArrowRight size={14} />
+                    </button>
+                  )}
+                  <Checkbox checked={options.includeQuote} onChange={(v) => onOptionsChange({ includeQuote: v })}>
+                    Incoterms Price Quotation を追記（EXW / FOB / CIF / DDP の提示価格・M3・重量・有効期限・運賃免責。「輸出見積」タブの計算結果から作成）
+                  </Checkbox>
+                  {options.includeQuote && (
+                    <button type="button" className={cx(btn.ghost, '-ml-2 text-indigo-700')} onClick={onShowQuote}>
+                      輸出見積ボードで価格を確認する <ArrowRight size={14} />
                     </button>
                   )}
                 </div>

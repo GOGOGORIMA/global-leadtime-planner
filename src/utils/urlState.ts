@@ -21,9 +21,23 @@
  *   &cl=truck.50.30.20.h                     ← cushioning per mode `{sea|truck}.{gap}.{wall}.{tier mm}.{v|h}`
  *                                               (v = also between tiers, h = horizontal only; only
  *                                                written when it differs from the mode's default)
+ *
+ * Quotation board (tab ⑥) — each key is only written when it differs from the default:
+ *   &qx=5000000          EXW base price (JPY)            &qcur=EUR   quote currency
+ *   &qfx=172.5           market rate (JPY per unit)      &qfb=3      FX buffer (%)
+ *   &qusd=150            JPY per USD for USD freight / charges (quote currency ≠ USD)
+ *   &qdom=55000          domestic truck freight (JPY)    &qexp=99600 export charges (JPY)
+ *   &qm=lcl              fcl | lcl | air                 &qdst=DE    destination country
+ *   &qmk=peak            normal | peak | surge           &qfr=1800USD freight override (JPY | USD)
+ *   &qcb=10              freight contingency (%)         &qins=0.2   insurance rate (%)
+ *   &qloc=450USD         destination (DAP) charges       &qduty=5    import duty (%)
+ *   &qval=2027-01-15     quotation validity
+ *   &qv=12.5 &qw=3200    cargo volume (m³) / weight (kg) overrides
+ *   &qct=40hc.2          FCL containers override         &qtr=10t.1  domestic trucks override
  */
 import { isContainerId, type ContainerCategory } from '../data/containers'
-import { DEFAULT_CUSHIONING } from '../state/defaults'
+import { CURRENCY_INFO, DEFAULT_USD_RATE, isQuoteCurrency } from '../data/currencies'
+import { DEFAULT_CUSHIONING, DEFAULT_QUOTE } from '../state/defaults'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
@@ -31,9 +45,12 @@ import {
   type CountrySettings,
   type CushionSettings,
   type DayOverride,
+  type MoneyAmount,
   type PlannerState,
   type PlannerTab,
+  type QuoteSettings,
   type Step,
+  type UnitCount,
 } from '../types'
 import { groupOverrideRanges } from './calendars'
 import { addDays, diffDays, isISODate, type ISODate, type OverrideKind } from './dateCalc'
@@ -44,8 +61,31 @@ export const URL_STATE_VERSION = '1'
 const STEP_CALENDAR_TOKEN = 'cal'
 const MAX_RANGE_DAYS = 400
 
+/** Quotation board keys (tab ⑥). */
+const QUOTE_KEYS = [
+  'qx',
+  'qcur',
+  'qfx',
+  'qfb',
+  'qusd',
+  'qdom',
+  'qexp',
+  'qm',
+  'qdst',
+  'qmk',
+  'qfr',
+  'qcb',
+  'qins',
+  'qloc',
+  'qduty',
+  'qval',
+  'qv',
+  'qw',
+  'qct',
+  'qtr',
+]
 /** Keys that mark a query string as carrying planner state. */
-const STATE_KEYS = ['base', 'c', 's', 'd', 'mode', 'ct', 'cg', 'cl']
+const STATE_KEYS = ['base', 'c', 's', 'd', 'mode', 'ct', 'cg', 'cl', ...QUOTE_KEYS]
 const CUSHION_CATEGORIES: readonly ContainerCategory[] = ['sea', 'truck']
 const EMPTY_CARGO_TOKEN = '-'
 
@@ -103,8 +143,84 @@ export function serializeState(state: PlannerState): string {
     if (c.gap === d.gap && c.wall === d.wall && c.stack === d.stack && c.stackGap === d.stackGap) continue
     params.append('cl', `${category}.${c.gap}.${c.wall}.${c.stackGap}.${c.stack ? 'v' : 'h'}`)
   }
+  serializeQuote(state.quote, params)
   params.set('tab', state.tab)
   return params.toString()
+}
+
+const moneyText = (m: MoneyAmount) => `${m.amount}${m.currency}`
+const unitsText = (u: UnitCount) => `${u.id}.${u.units}`
+
+/** Writes the quotation settings that differ from the defaults. */
+function serializeQuote(q: QuoteSettings, params: URLSearchParams): void {
+  const d = DEFAULT_QUOTE
+  const set = (key: string, value: string | number | null | undefined, skip: boolean) => {
+    if (!skip && value !== null && value !== undefined) params.set(key, String(value))
+  }
+  set('qx', q.exw, q.exw === d.exw)
+  set('qcur', q.currency, q.currency === d.currency)
+  set('qfx', q.fxRate, q.currency === 'JPY' || q.fxRate === CURRENCY_INFO[q.currency].defaultRate)
+  set('qfb', q.fxBuffer, q.fxBuffer === d.fxBuffer)
+  set('qusd', q.usdRate, q.usdRate === DEFAULT_USD_RATE)
+  set('qdom', q.domestic, false)
+  set('qexp', q.exportCharges, false)
+  set('qm', q.mode, q.mode === d.mode)
+  set('qdst', q.destination, !q.destination)
+  set('qmk', q.market, q.market === d.market)
+  set('qfr', q.freight && moneyText(q.freight), false)
+  set('qcb', q.freightBuffer, q.freightBuffer === d.freightBuffer)
+  set('qins', q.insuranceRate, q.insuranceRate === d.insuranceRate)
+  set('qloc', q.local && moneyText(q.local), false)
+  set('qduty', q.dutyRate, q.dutyRate === d.dutyRate)
+  set('qval', q.validUntil, false)
+  set('qv', q.volume, false)
+  set('qw', q.weight, false)
+  set('qct', q.container && unitsText(q.container), false)
+  set('qtr', q.truck && unitsText(q.truck), false)
+}
+
+/** `1800USD` / `250000JPY` → amount + currency. */
+function parseMoney(value: string | null): MoneyAmount | null {
+  const m = /^(\d+(?:\.\d+)?)(JPY|USD)$/i.exec(value ?? '')
+  return m ? { amount: Number(m[1]), currency: m[2].toUpperCase() as MoneyAmount['currency'] } : null
+}
+
+/** `40hc.2` → container / truck type + count (the category is checked by the sanitizer). */
+function parseUnits(value: string | null): UnitCount | null {
+  const [id, units] = (value ?? '').split('.')
+  return isContainerId(id) ? { id, units: Number(units ?? 1) } : null
+}
+
+/** Quotation settings from the query; missing keys use the defaults (they are not written). */
+function parseQuote(params: URLSearchParams): Partial<QuoteSettings> {
+  const num = (key: string, fallback: number | null): number | null => {
+    const value = params.get(key)
+    return value === null || value.trim() === '' ? fallback : Number(value)
+  }
+  const currencyParam = params.get('qcur')?.toUpperCase()
+  const currency = isQuoteCurrency(currencyParam) ? currencyParam : DEFAULT_QUOTE.currency
+  return {
+    exw: num('qx', DEFAULT_QUOTE.exw) ?? DEFAULT_QUOTE.exw,
+    currency,
+    fxRate: num('qfx', CURRENCY_INFO[currency].defaultRate) ?? CURRENCY_INFO[currency].defaultRate,
+    fxBuffer: num('qfb', DEFAULT_QUOTE.fxBuffer) ?? DEFAULT_QUOTE.fxBuffer,
+    usdRate: num('qusd', DEFAULT_USD_RATE) ?? DEFAULT_USD_RATE,
+    domestic: num('qdom', null),
+    exportCharges: num('qexp', null),
+    mode: (params.get('qm') ?? DEFAULT_QUOTE.mode) as QuoteSettings['mode'],
+    destination: (params.get('qdst') ?? '').toUpperCase(),
+    market: (params.get('qmk') ?? DEFAULT_QUOTE.market) as QuoteSettings['market'],
+    freight: parseMoney(params.get('qfr')),
+    freightBuffer: num('qcb', DEFAULT_QUOTE.freightBuffer) ?? DEFAULT_QUOTE.freightBuffer,
+    insuranceRate: num('qins', DEFAULT_QUOTE.insuranceRate) ?? DEFAULT_QUOTE.insuranceRate,
+    local: parseMoney(params.get('qloc')),
+    dutyRate: num('qduty', DEFAULT_QUOTE.dutyRate) ?? DEFAULT_QUOTE.dutyRate,
+    validUntil: params.get('qval'),
+    volume: num('qv', null),
+    weight: num('qw', null),
+    container: parseUnits(params.get('qct')),
+    truck: parseUnits(params.get('qtr')),
+  }
 }
 
 /** `1100x1100x1000_300_6_sr_f59e0b_Case #2` (the name goes last so it may contain `_`). */
@@ -288,6 +404,7 @@ export function parseState(search: string, fallback: PlannerState): ParsedUrlSta
       container,
       cargo: cargo as CargoItem[],
       cushioning,
+      quote: parseQuote(params) as QuoteSettings,
     },
     fallback,
   )
