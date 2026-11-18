@@ -23,21 +23,25 @@
  *                                                written when it differs from the mode's default)
  *
  * Quotation board (tab ⑥) — each key is only written when it differs from the default:
+ *   &qcm=direct          概算M3 input: simple | direct | vanning
+ *   &qsu=mm              size unit of the calculator     &qal=crate  packing allowance (none | carton | crate)
+ *   &qi=110x110x100_6_300   calculator row `{L}x{W}x{H}_{pieces}_{kg per piece}` (repeatable, max 3)
+ *   &qv=12.5 &qw=3200    direct entry: estimated volume (m³) / weight (kg)
+ *   &qpc=0               no export packing cost           &qpr=18000  packing rate (JPY per m³)
  *   &qx=5000000          EXW base price (JPY)            &qcur=EUR   quote currency
  *   &qfx=172.5           market rate (JPY per unit)      &qfb=3      FX buffer (%)
  *   &qusd=150            JPY per USD for USD freight / charges (quote currency ≠ USD)
  *   &qdom=55000          domestic truck freight (JPY)    &qexp=99600 export charges (JPY)
- *   &qm=lcl              fcl | lcl | air                 &qdst=DE    destination country
+ *   &qm=lcl              auto | fcl | lcl | air          &qdst=DE    destination country
  *   &qmk=peak            normal | peak | surge           &qfr=1800USD freight override (JPY | USD)
  *   &qcb=10              freight contingency (%)         &qins=0.2   insurance rate (%)
  *   &qloc=450USD         destination (DAP) charges       &qduty=5    import duty (%)
  *   &qval=2027-01-15     quotation validity
- *   &qv=12.5 &qw=3200    cargo volume (m³) / weight (kg) overrides
  *   &qct=40hc.2          FCL containers override         &qtr=10t.1  domestic trucks override
  */
 import { isContainerId, type ContainerCategory } from '../data/containers'
 import { CURRENCY_INFO, DEFAULT_USD_RATE, isQuoteCurrency } from '../data/currencies'
-import { DEFAULT_CUSHIONING, DEFAULT_QUOTE } from '../state/defaults'
+import { DEFAULT_CUSHIONING, DEFAULT_QUOTE, defaultQuoteRows } from '../state/defaults'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
@@ -53,6 +57,7 @@ import {
   type UnitCount,
 } from '../types'
 import { groupOverrideRanges } from './calendars'
+import type { SizeRow } from './incotermsCalc'
 import { addDays, diffDays, isISODate, type ISODate, type OverrideKind } from './dateCalc'
 import { formatClock } from './timezone'
 import { sanitizeState } from '../state/plannerReducer'
@@ -63,6 +68,12 @@ const MAX_RANGE_DAYS = 400
 
 /** Quotation board keys (tab ⑥). */
 const QUOTE_KEYS = [
+  'qcm',
+  'qsu',
+  'qi',
+  'qal',
+  'qpc',
+  'qpr',
   'qx',
   'qcur',
   'qfx',
@@ -157,6 +168,16 @@ function serializeQuote(q: QuoteSettings, params: URLSearchParams): void {
   const set = (key: string, value: string | number | null | undefined, skip: boolean) => {
     if (!skip && value !== null && value !== undefined) params.set(key, String(value))
   }
+  set('qcm', q.cargoMode, q.cargoMode === d.cargoMode)
+  set('qsu', q.sizeUnit, q.sizeUnit === d.sizeUnit)
+  if (JSON.stringify(q.items) !== JSON.stringify(defaultQuoteRows(q.sizeUnit))) {
+    for (const row of q.items) params.append('qi', `${row.length}x${row.width}x${row.height}_${row.quantity}_${row.weight}`)
+  }
+  set('qal', q.allowance, q.allowance === d.allowance)
+  set('qv', q.volume, q.volume === d.volume)
+  set('qw', q.weight, q.weight === d.weight)
+  set('qpc', q.packingCost ? '1' : '0', q.packingCost === d.packingCost)
+  set('qpr', q.packingRate, q.packingRate === d.packingRate)
   set('qx', q.exw, q.exw === d.exw)
   set('qcur', q.currency, q.currency === d.currency)
   set('qfx', q.fxRate, q.currency === 'JPY' || q.fxRate === CURRENCY_INFO[q.currency].defaultRate)
@@ -173,8 +194,6 @@ function serializeQuote(q: QuoteSettings, params: URLSearchParams): void {
   set('qloc', q.local && moneyText(q.local), false)
   set('qduty', q.dutyRate, q.dutyRate === d.dutyRate)
   set('qval', q.validUntil, false)
-  set('qv', q.volume, false)
-  set('qw', q.weight, false)
   set('qct', q.container && unitsText(q.container), false)
   set('qtr', q.truck && unitsText(q.truck), false)
 }
@@ -191,6 +210,13 @@ function parseUnits(value: string | null): UnitCount | null {
   return isContainerId(id) ? { id, units: Number(units ?? 1) } : null
 }
 
+/** `110x110x100_6_300` → size calculator row (sizes in the row unit, pieces, kg per piece). */
+function parseSizeRow(value: string): SizeRow | null {
+  const m = /^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)_(\d+)_(\d+(?:\.\d+)?)$/i.exec(value)
+  if (!m) return null
+  return { length: Number(m[1]), width: Number(m[2]), height: Number(m[3]), quantity: Number(m[4]), weight: Number(m[5]) }
+}
+
 /** Quotation settings from the query; missing keys use the defaults (they are not written). */
 function parseQuote(params: URLSearchParams): Partial<QuoteSettings> {
   const num = (key: string, fallback: number | null): number | null => {
@@ -199,7 +225,17 @@ function parseQuote(params: URLSearchParams): Partial<QuoteSettings> {
   }
   const currencyParam = params.get('qcur')?.toUpperCase()
   const currency = isQuoteCurrency(currencyParam) ? currencyParam : DEFAULT_QUOTE.currency
+  const sizeUnit = params.get('qsu') === 'mm' ? 'mm' : 'cm'
+  const rows = params.getAll('qi').map(parseSizeRow).filter((row): row is SizeRow => row !== null)
   return {
+    cargoMode: (params.get('qcm') ?? DEFAULT_QUOTE.cargoMode) as QuoteSettings['cargoMode'],
+    sizeUnit,
+    items: rows.length ? rows : defaultQuoteRows(sizeUnit),
+    allowance: (params.get('qal') ?? DEFAULT_QUOTE.allowance) as QuoteSettings['allowance'],
+    volume: num('qv', DEFAULT_QUOTE.volume) ?? DEFAULT_QUOTE.volume,
+    weight: num('qw', DEFAULT_QUOTE.weight) ?? DEFAULT_QUOTE.weight,
+    packingCost: params.has('qpc') ? params.get('qpc') !== '0' : DEFAULT_QUOTE.packingCost,
+    packingRate: num('qpr', DEFAULT_QUOTE.packingRate) ?? DEFAULT_QUOTE.packingRate,
     exw: num('qx', DEFAULT_QUOTE.exw) ?? DEFAULT_QUOTE.exw,
     currency,
     fxRate: num('qfx', CURRENCY_INFO[currency].defaultRate) ?? CURRENCY_INFO[currency].defaultRate,
@@ -216,8 +252,6 @@ function parseQuote(params: URLSearchParams): Partial<QuoteSettings> {
     local: parseMoney(params.get('qloc')),
     dutyRate: num('qduty', DEFAULT_QUOTE.dutyRate) ?? DEFAULT_QUOTE.dutyRate,
     validUntil: params.get('qval'),
-    volume: num('qv', null),
-    weight: num('qw', null),
     container: parseUnits(params.get('qct')),
     truck: parseUnits(params.get('qtr')),
   }

@@ -10,6 +10,7 @@ import {
   type Step,
 } from '../types'
 import { addDays, type ISODate } from '../utils/dateCalc'
+import { DEFAULT_PACKING_RATE, type SizeRow, type SizeUnit } from '../utils/incotermsCalc'
 
 export const MAX_STEPS = 20
 export const MAX_PARTNERS = 30
@@ -50,14 +51,41 @@ export const MAX_DUTY_RATE = 30
 export const MAX_QUOTE_VOLUME = 100_000
 export const MAX_QUOTE_WEIGHT = 10_000_000
 export const MAX_QUOTE_UNITS = 99
+/** Size calculator rows and packing rate limits. */
+export const MAX_QUOTE_ROWS = 3
+export const MAX_PACKING_RATE = 1_000_000
 /** Default quotation validity: today + 14 days. */
 export const DEFAULT_VALIDITY_DAYS = 14
 
+/** Default size calculator row: 6 pallets of 110 × 110 × 100 cm, 300 kg each (7.26 m³ / 1,800 kg). */
+const DEFAULT_QUOTE_ROWS_CM: readonly SizeRow[] = [{ length: 110, width: 110, height: 100, quantity: 6, weight: 300 }]
+
+/** The default rows in the given unit (mm = cm × 10). */
+export function defaultQuoteRows(unit: SizeUnit): SizeRow[] {
+  const factor = unit === 'mm' ? 10 : 1
+  return DEFAULT_QUOTE_ROWS_CM.map((row) => ({
+    ...row,
+    length: row.length * factor,
+    width: row.width * factor,
+    height: row.height * factor,
+  }))
+}
+
 /**
- * Quotation board defaults: a sample EXW price in USD with a 3 % FX buffer, FCL to the schedule's
- * partner country at normal market rates, 10 % freight contingency, 0.20 % insurance, 5 % duty.
+ * Quotation board defaults: the quick size calculator (one row of pallets, sizes as measured),
+ * export packing at 15,000 JPY / m³, a sample EXW price in USD with a 3 % FX buffer, the transport
+ * mode recommended from the volume, the schedule's partner country at normal market rates,
+ * 10 % freight contingency, 0.20 % insurance, 5 % duty.
  */
 export const DEFAULT_QUOTE: Readonly<QuoteSettings> = {
+  cargoMode: 'simple',
+  sizeUnit: 'cm',
+  items: defaultQuoteRows('cm'),
+  allowance: 'none',
+  volume: 8.5,
+  weight: 2400,
+  packingCost: true,
+  packingRate: DEFAULT_PACKING_RATE,
   exw: 5_000_000,
   currency: DEFAULT_QUOTE_CURRENCY,
   fxRate: CURRENCY_INFO[DEFAULT_QUOTE_CURRENCY].defaultRate,
@@ -65,7 +93,7 @@ export const DEFAULT_QUOTE: Readonly<QuoteSettings> = {
   usdRate: DEFAULT_USD_RATE,
   domestic: null,
   exportCharges: null,
-  mode: 'fcl',
+  mode: 'auto',
   destination: '',
   market: 'normal',
   freight: null,
@@ -74,8 +102,6 @@ export const DEFAULT_QUOTE: Readonly<QuoteSettings> = {
   local: null,
   dutyRate: 5,
   validUntil: null,
-  volume: null,
-  weight: null,
   container: null,
   truck: null,
 }
@@ -273,6 +299,6 @@ export function createDefaultState(today: ISODate): PlannerState {
     container: DEFAULT_CONTAINER,
     cargo: instantiateCargo(SAMPLE_CARGO),
     cushioning: { sea: { ...DEFAULT_CUSHIONING.sea }, truck: { ...DEFAULT_CUSHIONING.truck } },
-    quote: { ...DEFAULT_QUOTE },
+    quote: { ...DEFAULT_QUOTE, items: defaultQuoteRows('cm') },
   }
 }

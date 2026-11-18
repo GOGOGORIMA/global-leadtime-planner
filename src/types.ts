@@ -1,7 +1,8 @@
 import type { ContainerCategory, ContainerId } from './data/containers'
 import type { QuoteCurrency } from './data/currencies'
 import type { ISODate, OverrideKind, ScheduleMode } from './utils/dateCalc'
-import type { FreightMarket, ShippingMode } from './utils/freightRates'
+import type { FreightMarket, QuoteMode } from './utils/freightRates'
+import type { PackingAllowance, SizeRow, SizeUnit } from './utils/incotermsCalc'
 
 /** Calendar id for steps counted in calendar days (every day is a working day). */
 export const CALENDAR_DAYS = 'calendar'
@@ -90,12 +91,27 @@ export interface UnitCount {
   units: number
 }
 
+/** Where the quotation's volume and weight come from. */
+export type QuoteCargoMode = 'simple' | 'direct' | 'vanning'
+
 /**
  * Export quotation board (tab ⑥). Percentages are stored as percent values (3 = 3 %).
- * `null` means "automatic" (linked to the loading simulator or taken from the rate tables).
+ * `null` means "automatic" (estimated from the volume / weight or taken from the rate tables).
  */
 export interface QuoteSettings {
-  /** EXW base price (JPY): the sales price ex works, export packing included. */
+  /** 概算M3 input: quick size calculator (default), direct entry, or the loading simulator (tab ⑤). */
+  cargoMode: QuoteCargoMode
+  /** Size calculator: unit of the rows, 1–3 rows, packing allowance on the sizes. */
+  sizeUnit: SizeUnit
+  items: SizeRow[]
+  allowance: PackingAllowance
+  /** Direct entry: estimated gross volume (m³) and weight (kg). */
+  volume: number
+  weight: number
+  /** Add export packing (crates / pallets) to EXW at `packingRate` JPY per m³. */
+  packingCost: boolean
+  packingRate: number
+  /** EXW base price (JPY): the sales price ex works (before export packing when `packingCost` is on). */
   exw: number
   currency: QuoteCurrency
   /** Market rate: JPY per 1 unit of the quote currency (ignored for JPY). */
@@ -108,7 +124,8 @@ export interface QuoteSettings {
   domestic: number | null
   /** Export clearance & port charges: THC / B/L / vanning (JPY). */
   exportCharges: number | null
-  mode: ShippingMode
+  /** `auto` = LCL / FCL recommended from the estimated volume. */
+  mode: QuoteMode
   /** Destination country ('' = the schedule's partner country). */
   destination: string
   market: FreightMarket
@@ -124,9 +141,6 @@ export interface QuoteSettings {
   dutyRate: number
   /** Quotation validity (`null` = today + 14 days). */
   validUntil: ISODate | null
-  /** Overrides of the cargo linked from the loading simulator. */
-  volume: number | null
-  weight: number | null
   /** FCL containers (sea sizes only). */
   container: UnitCount | null
   /** Domestic trucks (truck sizes only). */

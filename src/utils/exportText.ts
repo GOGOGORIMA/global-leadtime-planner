@@ -179,7 +179,9 @@ export function formatMoney(amount: number, currency: string, decimals: number):
   return `${currency} ${amount.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
 }
 
-const formatM3 = (m3: number) => m3.toFixed(m3 < 10 ? 2 : 1)
+/** `7.3` CBM (one decimal). */
+const formatCbm = (m3: number) => m3.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+const formatWholeKg = (kg: number) => Math.round(kg).toLocaleString('en-US')
 
 /** Incoterms quoted in the English text (DAP is shown on the board only). */
 const QUOTED_TERMS = ['EXW', 'FOB', 'CIF', 'DDP'] as const
@@ -208,25 +210,22 @@ const TERM_NAMES_EN = {
   DDP: 'Delivered Duty Paid',
 } as const
 
-/** `Sea freight (FCL), 1 × 20ft Dry container` / `Sea freight (LCL), 15.5 R/T (W/M)` / `Air freight, chargeable weight 3,160 kg`. */
+/** `Sea freight (FCL), 1 × 20ft Dry container` / `Sea freight (LCL), 7.26 R/T (W/M)` / `Air freight, chargeable weight 1,800 kg`. */
 function transportText(q: QuoteResult): string {
   switch (q.freight.basis.unit) {
     case 'container':
       return `Sea freight (FCL), ${q.container.units} × ${q.container.spec.nameEn}`
     case 'rt':
-      return `Sea freight (LCL), ${q.revenueTons.toFixed(2)} R/T (W/M)`
+      return `Sea freight (LCL), ${q.chargedRevenueTons.toFixed(2)} R/T (W/M)`
     case 'kg':
       return `Air freight, chargeable weight ${formatKg(Math.ceil(q.chargeableKg))} kg`
   }
 }
 
-/** `31 packages, 15.5 m³ (net volume), 3,160 kg (gross weight)`; the package count only for linked cargo. */
-function cargoText(q: QuoteResult): string {
-  const count =
-    q.volumeLinked && q.weightLinked && q.pieces > 0
-      ? `${q.pieces.toLocaleString('en-US')} package${q.pieces === 1 ? '' : 's'}, `
-      : ''
-  return `${count}${formatM3(q.volume)} m³ (net volume), ${formatKg(q.weight)} kg (gross weight)`
+/** `Estimated Volume: 7.3 CBM / Gross Weight: 1,800 kg` (+ the number of packages when known). */
+function volumeText(q: QuoteResult): string {
+  const pieces = q.cargo.pieces > 0 ? ` (${q.cargo.pieces.toLocaleString('en-US')} package${q.cargo.pieces === 1 ? '' : 's'})` : ''
+  return `Estimated Volume: ${formatCbm(q.volume)} CBM / Gross Weight: ${formatWholeKg(q.weight)} kg${pieces}`
 }
 
 function exchangeRateText(q: QuoteResult): string | null {
@@ -255,13 +254,15 @@ function priceLines(q: QuotationText, withTermNames: boolean): string[] {
 /** "INCOTERMS PRICE QUOTATION" block appended to the standard e-mail. */
 export function renderQuotationSection(q: QuotationText, style: EnglishDateStyle): string[] {
   const { quote } = q
-  const basis = [transportText(quote), `${formatM3(quote.volume)} m³ (net) / ${formatKg(quote.weight)} kg (gross)`]
+  const basis = [transportText(quote)]
   const rate = exchangeRateText(quote)
   if (rate) basis.push(rate)
   return [
     `INCOTERMS PRICE QUOTATION (${quote.currency}, Incoterms® 2020)`,
     ...priceLines(q, false),
+    `- ${volumeText(quote)}`,
     `- Basis: ${basis.join('; ')}`,
+    ...(quote.incoterms.packing > 0 ? ['- EXW price includes export packing'] : []),
     `- DDP includes import duty estimated at ${formatPercentValue(quote.dutyRate)} of the CIF value`,
     `- Valid until: ${formatEnglishDate(quote.validUntil, style)}`,
     `Freight disclaimer: ${freightDisclaimer(quote)}`,
@@ -289,7 +290,8 @@ export function renderQuotationEmail(options: ExportOptions, q: QuotationText, r
   lines.push('SHIPMENT BASIS')
   lines.push(`- Transport: ${transportText(quote)}, Japan → ${q.destinationName}`)
   if (quote.freight.basis.unit === 'kg') lines.push('- For air freight, FOB / CIF correspond to FCA / CIP (Incoterms® 2020).')
-  lines.push(`- Cargo: ${cargoText(quote)}`)
+  lines.push(`- ${volumeText(quote)}`)
+  if (quote.incoterms.packing > 0) lines.push('- Export packing (crates / pallets) is included in the EXW price')
   const rate = exchangeRateText(quote)
   if (rate) lines.push(`- Exchange rate basis: ${rate}`)
   lines.push('- Marine insurance: 110% of the CIF value (CIF and DDP)')
@@ -325,12 +327,13 @@ function renderQuotationChat(q: QuotationText, style: EnglishDateStyle): string[
     quote.freight.basis.unit === 'container'
       ? `FCL ${quote.container.units} × ${quote.container.spec.label}`
       : quote.freight.basis.unit === 'rt'
-        ? `LCL ${quote.revenueTons.toFixed(2)} R/T`
+        ? `LCL ${quote.chargedRevenueTons.toFixed(2)} R/T`
         : `Air ${formatKg(Math.ceil(quote.chargeableKg))} kg chargeable`
   return [
     `*Price quotation* (${quote.currency}, Incoterms® 2020)`,
     ...QUOTED_TERMS.map((term) => `${namedPlace(term, q)}: *${formatMoney(quote.prices[term].quote, quote.currency, quote.decimals)}*`),
-    `${icon} ${mode} · ${formatM3(quote.volume)} m³ · ${formatKg(quote.weight)} kg`,
+    `📐 Estimated Volume: ${formatCbm(quote.volume)} CBM / Gross Weight: ${formatWholeKg(quote.weight)} kg`,
+    `${icon} ${mode}`,
     `⏳ Valid until ${formatEnglishDate(quote.validUntil, style, { weekday: false })} – freight subject to change`,
   ]
 }

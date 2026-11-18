@@ -18,6 +18,14 @@ export function isShippingMode(value: unknown): value is ShippingMode {
   return typeof value === 'string' && (SHIPPING_MODES as readonly string[]).includes(value)
 }
 
+/** Transport mode setting of the quotation: `auto` follows the recommendation from the estimated volume. */
+export const QUOTE_MODES = ['auto', ...SHIPPING_MODES] as const
+export type QuoteMode = (typeof QUOTE_MODES)[number]
+
+export function isQuoteMode(value: unknown): value is QuoteMode {
+  return typeof value === 'string' && (QUOTE_MODES as readonly string[]).includes(value)
+}
+
 /** Freight market level (市況): applied as a factor to the base freight of the table. */
 export const FREIGHT_MARKETS = ['normal', 'peak', 'surge'] as const
 export type FreightMarket = (typeof FREIGHT_MARKETS)[number]
