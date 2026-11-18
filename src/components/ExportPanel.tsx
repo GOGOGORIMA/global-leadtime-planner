@@ -1,8 +1,8 @@
 import { ArrowRight, CalendarClock, Check, Copy, ExternalLink, Mail, MessageCircle, type LucideIcon } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
-import { getContainerSpec, type ContainerId } from '../data/containers'
-import type { CargoItem } from '../types'
-import { buildPackingSummary } from '../utils/binPacking'
+import { getContainerSpec, type ContainerCategory, type ContainerId } from '../data/containers'
+import type { CargoItem, CushionSettings } from '../types'
+import { buildPackingSummary, toClearance } from '../utils/binPacking'
 import type { ResolvedCountry } from '../utils/calendars'
 import { toParticipant } from '../utils/calendars'
 import { copyToClipboard } from '../utils/clipboard'
@@ -33,6 +33,7 @@ interface ExportPanelProps {
   /** Loading simulator data (tab ⑤) for the optional Packing & Container Summary. */
   cargo: readonly CargoItem[]
   container: ContainerId
+  cushioning: Record<ContainerCategory, CushionSettings>
   options: ExportOptions
   onOptionsChange: (patch: Partial<ExportOptions>) => void
   /** Opens the meeting tab (会議可能時間帯). */
@@ -111,6 +112,7 @@ export function ExportPanel({
   meetingDate,
   cargo,
   container,
+  cushioning,
   options,
   onOptionsChange,
   onShowMeeting,
@@ -143,8 +145,14 @@ export function ExportPanel({
 
   // Packing & Container Summary (tab ⑤) — only computed when it is switched on.
   const packing = useMemo(
-    () => (options.includePacking && !isMeeting ? buildPackingSummary(cargo, getContainerSpec(container)) : null),
-    [options.includePacking, isMeeting, cargo, container],
+    () =>
+      options.includePacking && !isMeeting
+        ? buildPackingSummary(cargo, getContainerSpec(container), {
+            sea: toClearance(cushioning.sea),
+            truck: toClearance(cushioning.truck),
+          })
+        : null,
+    [options.includePacking, isMeeting, cargo, container, cushioning],
   )
 
   const text = useMemo(() => {
@@ -338,7 +346,7 @@ export function ExportPanel({
                     <p className="text-xs text-amber-700">相手国（基準国以外）を選択すると会議候補を記載できます。</p>
                   )}
                   <Checkbox checked={options.includePacking} onChange={(v) => onOptionsChange({ includePacking: v })}>
-                    Packing &amp; Container Summary を追記（総容積・総重量・推奨コンテナ／トラック。「積載3D」タブの貨物リストから作成）
+                    Packing &amp; Container Summary を追記（正味／緩衝材込みの容積・総重量・推奨コンテナ／トラック。「積載3D」タブの貨物リストと緩衝材設定から作成）
                   </Checkbox>
                   {options.includePacking && (
                     <button type="button" className={cx(btn.ghost, '-ml-2 text-indigo-700')} onClick={onShowVanning}>

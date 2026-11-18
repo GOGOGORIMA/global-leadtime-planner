@@ -1,6 +1,6 @@
 import { DEFAULT_CONTAINER } from '../data/containers'
 import { DEFAULT_BASE_COUNTRY, PRESET_PARTNER_COUNTRIES } from '../data/countries'
-import { CALENDAR_DAYS, type CargoItem, type PlannerState, type Step } from '../types'
+import { CALENDAR_DAYS, type CargoItem, type CushionSettings, type PlannerState, type Step } from '../types'
 import { addDays, type ISODate } from '../utils/dateCalc'
 
 export const MAX_STEPS = 20
@@ -11,6 +11,23 @@ export const MAX_CARGO_QUANTITY = 999
 /** Largest accepted piece dimension (mm) and weight (kg). */
 export const MAX_CARGO_DIMENSION = 20000
 export const MAX_CARGO_WEIGHT = 100000
+/** Cushioning limits (mm): gap / wall clearance / individual margin, and between tiers. */
+export const MAX_CUSHION = 500
+export const MAX_STACK_CUSHION = 50
+
+/**
+ * Cushioning defaults per transport mode: trucks keep 50 mm between pieces and 30 mm to the
+ * side boards / front wall / doors (lashing work, no rubbing); containers start without.
+ */
+export const DEFAULT_CUSHIONING: Readonly<Record<'sea' | 'truck', CushionSettings>> = {
+  sea: { gap: 0, wall: 0, stack: false, stackGap: 20 },
+  truck: { gap: 50, wall: 30, stack: false, stackGap: 20 },
+}
+
+/** Quick-select values (mm) of the cushioning panel. */
+export const GAP_PRESETS = [0, 30, 50, 100] as const
+export const WALL_PRESETS = [0, 20, 50] as const
+export const STACK_PRESETS = [0, 10, 20, 50] as const
 /** Default requested delivery date for the backward mode: today + 60 days. */
 export const DEFAULT_LEAD_DAYS = 60
 
@@ -141,6 +158,7 @@ export const SAMPLE_CARGO: readonly CargoDefinition[] = [
     stackable: false,
     rotatable: true,
     color: CARGO_COLORS[0],
+    margin: 0,
   },
   {
     name: 'Case #2 Accessories (Pallet)',
@@ -152,6 +170,7 @@ export const SAMPLE_CARGO: readonly CargoDefinition[] = [
     stackable: true,
     rotatable: true,
     color: CARGO_COLORS[1],
+    margin: 0,
   },
   {
     name: 'Case #3 Spare Parts (Carton)',
@@ -163,6 +182,7 @@ export const SAMPLE_CARGO: readonly CargoDefinition[] = [
     stackable: true,
     rotatable: true,
     color: CARGO_COLORS[2],
+    margin: 0,
   },
 ]
 
@@ -178,6 +198,7 @@ export function newCargoDefinition(index: number, color: string): CargoDefinitio
     stackable: true,
     rotatable: true,
     color,
+    margin: 0,
   }
 }
 
@@ -199,5 +220,6 @@ export function createDefaultState(today: ISODate): PlannerState {
     tab: 'meeting',
     container: DEFAULT_CONTAINER,
     cargo: instantiateCargo(SAMPLE_CARGO),
+    cushioning: { sea: { ...DEFAULT_CUSHIONING.sea }, truck: { ...DEFAULT_CUSHIONING.truck } },
   }
 }

@@ -1,10 +1,11 @@
-import { isContainerId, type ContainerId } from '../data/containers'
+import { isContainerId, type ContainerCategory, type ContainerId } from '../data/containers'
 import { isKnownCountry } from '../data/countries'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
   type CargoItem,
   type CountrySettings,
+  type CushionSettings,
   type DayOverride,
   type PlannerState,
   type PlannerTab,
@@ -13,11 +14,14 @@ import {
 import { isISODate, normalizeStepDays, type ISODate, type ScheduleMode } from '../utils/dateCalc'
 import { isValidTimeZone } from '../utils/timezone'
 import {
+  DEFAULT_CUSHIONING,
   MAX_CARGO_DIMENSION,
   MAX_CARGO_ITEMS,
   MAX_CARGO_QUANTITY,
   MAX_CARGO_WEIGHT,
+  MAX_CUSHION,
   MAX_PARTNERS,
+  MAX_STACK_CUSHION,
   MAX_STEPS,
   createId,
   newCargoDefinition,
@@ -51,6 +55,8 @@ export type PlannerAction =
   | { type: 'duplicateCargo'; id: string }
   | { type: 'removeCargo'; id: string }
   | { type: 'setCargo'; cargo: ReadonlyArray<Partial<CargoDefinition>> }
+  | { type: 'setCushioning'; category: ContainerCategory; patch: Partial<CushionSettings> }
+  | { type: 'resetCushioning'; category: ContainerCategory }
   | { type: 'replace'; state: PlannerState }
 
 const MAX_LABEL_LENGTH = 80
@@ -78,6 +84,17 @@ function sanitizeCargo(item: Partial<CargoItem>, index: number, usedColors: read
     stackable: item.stackable !== false,
     rotatable: item.rotatable !== false,
     color: typeof item.color === 'string' && HEX_COLOR.test(item.color) ? item.color.toLowerCase() : nextCargoColor(usedColors),
+    margin: clampInt(item.margin, 0, MAX_CUSHION, 0),
+  }
+}
+
+/** Cushioning: gap / wall 0–500 mm, tier cushioning 0–50 mm (whole millimetres). */
+export function sanitizeCushion(input: Partial<CushionSettings> | undefined, fallback: CushionSettings): CushionSettings {
+  return {
+    gap: clampInt(input?.gap, 0, MAX_CUSHION, fallback.gap),
+    wall: clampInt(input?.wall, 0, MAX_CUSHION, fallback.wall),
+    stack: typeof input?.stack === 'boolean' ? input.stack : fallback.stack,
+    stackGap: clampInt(input?.stackGap, 0, MAX_STACK_CUSHION, fallback.stackGap),
   }
 }
 
@@ -185,6 +202,10 @@ export function sanitizeState(input: PlannerState, fallback: PlannerState): Plan
     tab: isPlannerTab(input.tab) ? input.tab : fallback.tab,
     container: isContainerId(input.container) ? input.container : fallback.container,
     cargo: sanitizeCargoList(input.cargo ?? fallback.cargo),
+    cushioning: {
+      sea: sanitizeCushion(input.cushioning?.sea, fallback.cushioning?.sea ?? DEFAULT_CUSHIONING.sea),
+      truck: sanitizeCushion(input.cushioning?.truck, fallback.cushioning?.truck ?? DEFAULT_CUSHIONING.truck),
+    },
   }
 }
 
@@ -364,6 +385,16 @@ export function plannerReducer(state: PlannerState, action: PlannerAction): Plan
       return { ...state, cargo: state.cargo.filter((c) => c.id !== action.id) }
     case 'setCargo':
       return { ...state, cargo: sanitizeCargoList(action.cargo) }
+    case 'setCushioning': {
+      const current = state.cushioning[action.category]
+      const next = sanitizeCushion({ ...current, ...action.patch }, current)
+      return { ...state, cushioning: { ...state.cushioning, [action.category]: next } }
+    }
+    case 'resetCushioning':
+      return {
+        ...state,
+        cushioning: { ...state.cushioning, [action.category]: { ...DEFAULT_CUSHIONING[action.category] } },
+      }
     case 'replace':
       return action.state
     default:

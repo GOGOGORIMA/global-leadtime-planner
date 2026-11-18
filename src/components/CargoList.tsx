@@ -1,69 +1,30 @@
 import { CopyPlus, PackagePlus, RotateCw, Trash2 } from 'lucide-react'
-import { useState, type Dispatch } from 'react'
+import type { Dispatch } from 'react'
 import { PALLET_PRESETS } from '../data/containers'
-import { MAX_CARGO_DIMENSION, MAX_CARGO_ITEMS, MAX_CARGO_QUANTITY, MAX_CARGO_WEIGHT, SAMPLE_CARGO } from '../state/defaults'
+import {
+  MAX_CARGO_DIMENSION,
+  MAX_CARGO_ITEMS,
+  MAX_CARGO_QUANTITY,
+  MAX_CARGO_WEIGHT,
+  MAX_CUSHION,
+  SAMPLE_CARGO,
+} from '../state/defaults'
 import type { PlannerAction } from '../state/plannerReducer'
 import type { CargoItem } from '../types'
-import type { ItemLoadStatus, UnplacedReason } from '../utils/binPacking'
+import { occupiedSize, type Clearance, type ItemLoadStatus, type UnplacedReason } from '../utils/binPacking'
 import { btn, cx, focusRing, inputClass } from './classes'
+import { NumberField } from './NumberField'
 
 const REASON_LABELS: Record<UnplacedReason, string> = {
   space: 'スペース不足',
   weight: '重量超過',
   door: 'ドア開口高を超過',
-  size: '荷室に入らない寸法',
+  size: '荷室（有効寸法）に入らない寸法',
   limit: '計算上限（1,000 個）を超過',
 }
 
 const formatNumber = (n: number, digits = 0) =>
   n.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
-
-/** Numeric input that only commits valid numbers (the reducer clamps them to the allowed range). */
-function NumberField({
-  label,
-  value,
-  onChange,
-  min,
-  max,
-  step = 1,
-  ariaLabel,
-}: {
-  label: string
-  value: number
-  onChange: (value: number) => void
-  min: number
-  max: number
-  step?: number
-  ariaLabel: string
-}) {
-  const [draft, setDraft] = useState(String(value))
-  const [synced, setSynced] = useState(value)
-  if (value !== synced) {
-    setSynced(value)
-    setDraft(String(value))
-  }
-  return (
-    <label className="block min-w-0">
-      <span className="mb-0.5 block truncate text-[10px] font-medium text-slate-500">{label}</span>
-      <input
-        type="number"
-        inputMode={step < 1 ? 'decimal' : 'numeric'}
-        min={min}
-        max={max}
-        step={step}
-        aria-label={ariaLabel}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value)
-          const n = Number(e.target.value)
-          if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n)
-        }}
-        onBlur={() => setDraft(String(value))}
-        className={cx(inputClass, 'no-spinner px-2 py-1.5 text-right tabular-nums')}
-      />
-    </label>
-  )
-}
 
 function Toggle({
   checked,
@@ -104,17 +65,22 @@ function CargoRow({
   item,
   index,
   status,
+  clearance,
   dispatch,
   canDuplicate,
 }: {
   item: CargoItem
   index: number
   status?: ItemLoadStatus
+  clearance: Clearance
   dispatch: Dispatch<PlannerAction>
   canDuplicate: boolean
 }) {
   const update = (patch: Partial<Omit<CargoItem, 'id'>>) => dispatch({ type: 'updateCargo', id: item.id, patch })
   const unitVolume = (item.length * item.width * item.height) / 1e9
+  const occupied = occupiedSize(item, clearance)
+  const unitGross = (occupied.length * occupied.width * occupied.height) / 1e9
+  const cushioned = unitGross - unitVolume > 1e-9
   const unplaced = status
     ? (Object.entries(status.unplaced) as Array<[UnplacedReason, number]>).filter(([, n]) => n > 0)
     : []
@@ -174,11 +140,21 @@ function CargoRow({
         <div className="col-span-2">
           <NumberField label="高さ H（mm）" ariaLabel={`${name} の高さ（mm）`} value={item.height} min={1} max={MAX_CARGO_DIMENSION} onChange={(height) => update({ height })} />
         </div>
-        <div className="col-span-3">
+        <div className="col-span-2">
           <NumberField label="重量（kg / 個）" ariaLabel={`${name} の 1 個あたり重量（kg）`} value={item.weight} min={0} max={MAX_CARGO_WEIGHT} step={0.1} onChange={(weight) => update({ weight })} />
         </div>
-        <div className="col-span-3">
+        <div className="col-span-2">
           <NumberField label="個数" ariaLabel={`${name} の個数`} value={item.quantity} min={1} max={MAX_CARGO_QUANTITY} onChange={(quantity) => update({ quantity })} />
+        </div>
+        <div className="col-span-2" title="この貨物だけ周囲（前後左右）に追加する緩衝材の厚み。貨物間・壁面の設定に上乗せされます。">
+          <NumberField
+            label="個別緩衝材（+mm）"
+            ariaLabel={`${name} の個別緩衝材（mm）`}
+            value={item.margin}
+            min={0}
+            max={MAX_CUSHION}
+            onChange={(margin) => update({ margin })}
+          />
         </div>
       </div>
 
@@ -223,6 +199,7 @@ function CargoRow({
       <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg bg-slate-50 px-2 py-1 text-[11px] text-slate-600 tabular-nums">
         <span>
           {formatNumber(unitVolume, 2)} m³ × {item.quantity} = <b className="text-slate-800">{formatNumber(unitVolume * item.quantity, 2)} m³</b>
+          {cushioned && <span className="text-amber-700">（緩衝材込み {formatNumber(unitGross * item.quantity, 2)} m³）</span>}
           {' ・ '}
           <b className="text-slate-800">{formatNumber(item.weight * item.quantity, item.weight % 1 ? 1 : 0)} kg</b>
         </span>
@@ -242,10 +219,13 @@ function CargoRow({
 export function CargoList({
   cargo,
   statuses,
+  clearance,
   dispatch,
 }: {
   cargo: readonly CargoItem[]
   statuses: readonly ItemLoadStatus[]
+  /** Cushioning of the selected transport mode (for the volume incl. cushioning). */
+  clearance: Clearance
   dispatch: Dispatch<PlannerAction>
 }) {
   const full = cargo.length >= MAX_CARGO_ITEMS
@@ -291,6 +271,7 @@ export function CargoList({
               item={item}
               index={index}
               status={statuses[index]}
+              clearance={clearance}
               dispatch={dispatch}
               canDuplicate={!full}
             />

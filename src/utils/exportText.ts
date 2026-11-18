@@ -2,7 +2,7 @@
  * Customer-facing English text (e-mail / WhatsApp) generated from a `ScheduleReport`.
  * Pure functions: same report + options → same text.
  */
-import type { CategorySuggestion, PackingSummary } from './binPacking'
+import { hasClearance, type CategorySuggestion, type Clearance, type PackingSummary } from './binPacking'
 import { yearOf, type ISODate } from './dateCalc'
 import { formatEnglishDate, formatEnglishRange, type EnglishDateStyle } from './dateFormat'
 import type { ReportCountry, ReportHoliday, ReportStep, ScheduleReport } from './report'
@@ -106,6 +106,17 @@ function equipmentText(suggestion: CategorySuggestion): string {
     : `not possible by standard truck (${why})`
 }
 
+/** `50 mm between packages, 30 mm to the walls, 20 mm between tiers` (or `none`). */
+function clearanceText(clearance: Clearance): string {
+  const parts: string[] = []
+  if (clearance.gap > 0) parts.push(`${formatMm(clearance.gap)} mm between packages`)
+  if (clearance.wall > 0) parts.push(`${formatMm(clearance.wall)} mm to the walls`)
+  if (clearance.stack > 0) parts.push(`${formatMm(clearance.stack)} mm between tiers`)
+  return parts.length ? parts.join(', ') : 'none'
+}
+
+const sameClearance = (a: Clearance, b: Clearance) => a.gap === b.gap && a.wall === b.wall && a.stack === b.stack
+
 /** "PACKING & CONTAINER SUMMARY" block of the e-mail (loading simulator, tab ⑤). */
 export function renderPackingSection(packing: PackingSummary): string[] {
   const lines: string[] = ['PACKING & CONTAINER SUMMARY']
@@ -113,24 +124,37 @@ export function renderPackingSection(packing: PackingSummary): string[] {
     lines.push('- No packages entered yet.')
     return lines
   }
+  const plan = packing.selected
+  const used = plan.clearance
   lines.push(`- Packages: ${pieces(packing.pieces)} (${packing.types} type${packing.types === 1 ? '' : 's'})`)
-  lines.push(`- Total volume: ${packing.totalVolume.toFixed(1)} m³`)
+  lines.push(`- Net cargo volume: ${packing.totalVolume.toFixed(1)} m³`)
+  lines.push(`- Gross occupied volume (incl. cushioning): ${packing.grossVolume.toFixed(1)} m³`)
   lines.push(`- Total gross weight: ${formatKg(packing.totalWeight)} kg`)
   if (packing.largest) lines.push(`- Largest package: ${sizeText(packing.largest)} (${packing.largest.name})`)
   if (packing.nonStackablePieces > 0) lines.push(`- Non-stackable: ${pieces(packing.nonStackablePieces)} (no top load)`)
-  lines.push(`- Recommended equipment (sea): ${equipmentText(packing.sea)}`)
-  lines.push(`- Recommended equipment (road): ${equipmentText(packing.truck)}`)
-  const plan = packing.selected
+  lines.push(`- Cushioning / clearance: ${clearanceText(used)}`)
+  // A recommendation planned with other cushioning than the loading plan says so.
+  const recommendation = (suggestion: CategorySuggestion) => {
+    const own = packing.clearance[suggestion.category]
+    const note = !sameClearance(own, used) && hasClearance(own) && suggestion.best ? `, allowing ${clearanceText(own)}` : ''
+    return `${equipmentText(suggestion)}${note}`
+  }
+  lines.push(`- Recommended equipment (sea): ${recommendation(packing.sea)}`)
+  lines.push(`- Recommended equipment (road): ${recommendation(packing.truck)}`)
   const name = plan.spec.nameEn
   lines.push(
     plan.loadedPieces === plan.totalPieces
-      ? `- Loading plan (${name}): all ${pieces(plan.totalPieces)} fit – ${formatPercent(plan.volumeRatio)} of volume, ${formatPercent(plan.weightRatio)} of max. payload`
+      ? `- Loading plan (${name}): all ${pieces(plan.totalPieces)} fit – ${formatPercent(plan.grossVolumeRatio)} of volume (gross occupied), ${formatPercent(plan.weightRatio)} of max. payload`
       : `- Loading plan (${name}): ${plan.loadedPieces} of ${pieces(plan.totalPieces)} fit – the remaining ${pieces(plan.totalPieces - plan.loadedPieces)} require${plan.totalPieces - plan.loadedPieces === 1 ? 's' : ''} additional space`,
   )
   lines.push('Package list:')
   packing.items.forEach((item, i) => {
+    const notes = [
+      ...(item.stackable ? [] : ['non-stackable']),
+      ...(item.margin > 0 ? [`+${formatMm(item.margin)} mm cushioning`] : []),
+    ]
     lines.push(
-      `${i + 1}. ${item.name}: ${sizeText(item)}, ${formatKg(item.weight)} kg × ${item.quantity}${item.stackable ? '' : ' (non-stackable)'}`,
+      `${i + 1}. ${item.name}: ${sizeText(item)}, ${formatKg(item.weight)} kg × ${item.quantity}${notes.length ? ` (${notes.join(', ')})` : ''}`,
     )
   })
   lines.push('Note: the loading plan is an estimate based on the package dimensions and weights above.')
@@ -306,7 +330,8 @@ export function renderWhatsApp(
   if (options.includePacking && packing && packing.pieces > 0) {
     lines.push('')
     lines.push('*Packing summary*')
-    lines.push(`📦 ${pieces(packing.pieces)} · ${packing.totalVolume.toFixed(1)} m³ · ${formatKg(packing.totalWeight)} kg`)
+    const gross = packing.grossVolume - packing.totalVolume > 0.05 ? ` net / ${packing.grossVolume.toFixed(1)} m³ gross` : ''
+    lines.push(`📦 ${pieces(packing.pieces)} · ${packing.totalVolume.toFixed(1)} m³${gross} · ${formatKg(packing.totalWeight)} kg`)
     lines.push(`🚢 Sea: ${equipmentText(packing.sea)}`)
     lines.push(`🚚 Road: ${equipmentText(packing.truck)}`)
   }

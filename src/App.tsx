@@ -38,7 +38,7 @@ export default function App() {
   const [meetingDate, setMeetingDate] = useState<ISODate | null>(null)
   const [exportOptions, setExportOptions] = useStoredState(STORAGE_KEYS.exportOptions, DEFAULT_EXPORT_OPTIONS)
 
-  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab, container, cargo } = state
+  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab, container, cargo, cushioning } = state
   const countries = useMemo(
     () => resolveSelectedCountries({ base: baseCode, partners, settings }),
     [baseCode, partners, settings],
@@ -150,13 +150,16 @@ export default function App() {
                 meetingDate={meetingDate}
                 cargo={cargo}
                 container={container}
+                cushioning={cushioning}
                 options={exportOptions}
                 onOptionsChange={setExportOptions}
                 onShowMeeting={() => setTab('meeting')}
                 onShowVanning={() => setTab('vanning')}
               />
             )}
-            {tab === 'vanning' && <VanningPanel container={container} cargo={cargo} dispatch={dispatch} today={today} />}
+            {tab === 'vanning' && (
+              <VanningPanel container={container} cargo={cargo} cushioning={cushioning} dispatch={dispatch} today={today} />
+            )}
           </div>
 
           {/* Inside the right column so the sticky left pane is never pushed up at the end of the page. */}

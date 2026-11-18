@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { CONTAINER_SPECS, getContainerSpec, type ContainerSpec } from '../data/containers'
 import { SAMPLE_CARGO, instantiateCargo } from '../state/defaults'
 import type { CargoItem } from '../types'
+import { DEFAULT_CUSHIONING } from '../state/defaults'
 import {
   MAX_PIECES,
+  NO_CLEARANCE,
   SUPPORT_RATIO,
   analyzePacking,
   buildPackingSummary,
@@ -11,46 +13,79 @@ import {
   fillLevel,
   packPieces,
   suggestForCategory,
+  toClearance,
+  type Clearance,
   type Placement,
 } from './binPacking'
 
 const EPS = 0.5
 
 function cargo(fields: Partial<CargoItem> & Pick<CargoItem, 'length' | 'width' | 'height'>): CargoItem {
-  return { id: 'c', name: 'Case', weight: 100, quantity: 1, stackable: true, rotatable: true, color: '#6366f1', ...fields }
+  return {
+    id: 'c',
+    name: 'Case',
+    weight: 100,
+    quantity: 1,
+    stackable: true,
+    rotatable: true,
+    color: '#6366f1',
+    ...fields,
+    margin: fields.margin ?? 0,
+  }
 }
 
-/** Checks every physical rule of a loading plan. */
-function expectValidPlan(spec: ContainerSpec, items: readonly CargoItem[], placements: readonly Placement[]) {
+/** Checks every physical rule of a loading plan (including cushioning / clearance). */
+function expectValidPlan(
+  spec: ContainerSpec,
+  items: readonly CargoItem[],
+  placements: readonly Placement[],
+  clearance: Clearance = NO_CLEARANCE,
+) {
+  const { gap, wall, stack } = clearance
   const total = placements.reduce((sum, p) => sum + p.weight, 0)
   expect(total).toBeLessThanOrEqual(spec.maxPayload + 1e-6)
   for (const [i, p] of placements.entries()) {
     const item = items[p.item]
-    // Inside the cargo space, never taller than the door, only turned on the floor.
-    expect(p.x).toBeGreaterThanOrEqual(-EPS)
-    expect(p.y).toBeGreaterThanOrEqual(-EPS)
+    const m = item.margin
+    // Inside the usable area (wall clearance + own margin), never taller than the door, only turned on the floor.
+    expect(p.x).toBeGreaterThanOrEqual(wall + m - EPS)
+    expect(p.y).toBeGreaterThanOrEqual(wall + m - EPS)
     expect(p.z).toBeGreaterThanOrEqual(-EPS)
-    expect(p.x + p.length).toBeLessThanOrEqual(spec.length + EPS)
-    expect(p.y + p.width).toBeLessThanOrEqual(spec.width + EPS)
+    expect(p.x + p.length).toBeLessThanOrEqual(spec.length - wall - m + EPS)
+    expect(p.y + p.width).toBeLessThanOrEqual(spec.width - wall - m + EPS)
     expect(p.z + p.height).toBeLessThanOrEqual(spec.height + EPS)
     expect(p.height).toBe(item.height)
     expect(p.height).toBeLessThanOrEqual(spec.doorHeight)
     expect(p.rotated ? [p.width, p.length] : [p.length, p.width]).toEqual([item.length, item.width])
     if (p.rotated) expect(item.rotatable).toBe(true)
+    // The occupied box is the piece plus half a gap and its margin on each side, plus the tier cushion on top.
+    expect(p.occupied).toEqual({
+      x: p.x - gap / 2 - m,
+      y: p.y - gap / 2 - m,
+      z: p.z,
+      length: p.length + gap + 2 * m,
+      width: p.width + gap + 2 * m,
+      height: p.height + stack,
+    })
 
     let supported = 0
     for (const [j, q] of placements.entries()) {
       if (i === j) continue
-      const ox = Math.min(p.x + p.length, q.x + q.length) - Math.max(p.x, q.x)
-      const oy = Math.min(p.y + p.width, q.y + q.width) - Math.max(p.y, q.y)
-      const oz = Math.min(p.z + p.height, q.z + q.height) - Math.max(p.z, q.z)
-      expect(ox > EPS && oy > EPS && oz > EPS, `pieces ${i} and ${j} overlap`).toBe(false)
-      if (ox > EPS && oy > EPS && q.z + q.height <= p.z + EPS) {
+      // Occupied boxes never overlap: neighbours keep the gap (+ margins) and the tier cushion.
+      const a = p.occupied
+      const b = q.occupied
+      const ox = Math.min(a.x + a.length, b.x + b.length) - Math.max(a.x, b.x)
+      const oy = Math.min(a.y + a.width, b.y + b.width) - Math.max(a.y, b.y)
+      const oz = Math.min(a.z + a.height, b.z + b.height) - Math.max(a.z, b.z)
+      expect(ox > EPS && oy > EPS && oz > EPS, `pieces ${i} and ${j} (with cushioning) overlap`).toBe(false)
+      const fx = Math.min(p.x + p.length, q.x + q.length) - Math.max(p.x, q.x)
+      const fy = Math.min(p.y + p.width, q.y + q.width) - Math.max(p.y, q.y)
+      if (fx > EPS && fy > EPS && q.z + q.height <= p.z + EPS) {
         // q is somewhere below p: it must allow stacking.
         expect(items[q.item].stackable, `piece ${i} is above non-stackable piece ${j}`).toBe(true)
-        if (Math.abs(q.z + q.height - p.z) <= EPS) {
+        if (Math.abs(q.z + q.height + stack - p.z) <= EPS) {
           expect(q.weight).toBeGreaterThanOrEqual(p.weight) // no heavier piece on a lighter one
-          supported += ox * oy
+          supported += fx * fy
         }
       }
     }
@@ -174,9 +209,14 @@ describe('packPieces / analyzePacking', () => {
 
   it('keeps every rule on random shipments in every container and truck', () => {
     const next = random(20261117)
-    for (let round = 0; round < 24; round++) {
+    for (let round = 0; round < 36; round++) {
       const spec = CONTAINER_SPECS[round % CONTAINER_SPECS.length]
       const rows = 1 + Math.floor(next() * 5)
+      // Every other round with random cushioning / clearance and per-cargo margins.
+      const cushioned = round % 2 === 1
+      const clearance: Clearance = cushioned
+        ? { gap: Math.round(next() * 150), wall: Math.round(next() * 100), stack: next() > 0.5 ? Math.round(next() * 50) : 0 }
+        : NO_CLEARANCE
       const items = Array.from({ length: rows }, (_, i) =>
         cargo({
           id: String(i),
@@ -187,16 +227,109 @@ describe('packPieces / analyzePacking', () => {
           quantity: 1 + Math.floor(next() * 25),
           stackable: next() > 0.25,
           rotatable: next() > 0.2,
+          margin: cushioned && next() > 0.6 ? Math.round(next() * 80) : 0,
         }),
       )
-      const result = analyzePacking(spec, items)
-      expectValidPlan(spec, items, result.placements)
+      const result = analyzePacking(spec, items, clearance)
+      expectValidPlan(spec, items, result.placements, clearance)
       const accounted = result.items.reduce(
         (sum, s) => sum + s.loaded + Object.values(s.unplaced).reduce((a, b) => a + (b ?? 0), 0),
         0,
       )
       expect(accounted).toBe(result.totalPieces)
     }
+  })
+
+  it('keeps the gap between pieces and loads fewer pallets with thick cushioning', () => {
+    const items = [cargo({ length: 1100, width: 1100, height: 1000, quantity: 12, stackable: false })]
+    const clearance = { gap: 100, wall: 0, stack: 0 }
+    const result = analyzePacking(c20, items, clearance)
+    // 1,200 mm per pallet with cushioning: 4 along (4,800 + 2 × 50 mm ≤ 5,898 + 100) × 2 across.
+    expect(result.loadedPieces).toBe(8)
+    expect(result.placements.slice(0, 3).map((p) => [p.x, p.y])).toEqual([
+      [0, 0],
+      [0, 1200],
+      [1200, 0],
+    ])
+    expectValidPlan(c20, items, result.placements, clearance)
+  })
+
+  it('keeps the wall clearance on every side', () => {
+    const items = [cargo({ length: 1100, width: 1100, height: 1000, quantity: 12, stackable: false })]
+    const clearance = { gap: 0, wall: 100, stack: 0 }
+    const result = analyzePacking(c20, items, clearance)
+    // 2,352 − 2 × 100 = 2,152 mm usable width: only one pallet across.
+    expect(result.usableWidth).toBe(2152)
+    expect(result.loadedPieces).toBe(5)
+    expect(result.placements[0]).toMatchObject({ x: 100, y: 100, z: 0 })
+    expectValidPlan(c20, items, result.placements, clearance)
+  })
+
+  it('applies the truck defaults: 50 mm between pallets and 30 mm to the walls', () => {
+    const truck = getContainerSpec('4t')
+    const clearance = toClearance(DEFAULT_CUSHIONING.truck)
+    expect(clearance).toEqual({ gap: 50, wall: 30, stack: 0 })
+    const items = [cargo({ length: 1100, width: 1100, height: 1000, quantity: 10, stackable: false })]
+    const result = analyzePacking(truck, items, clearance)
+    expect(result.loadedPieces).toBe(10)
+    expect(result.placements.slice(0, 3).map((p) => [p.x, p.y])).toEqual([
+      [30, 30],
+      [30, 1180], // 30 + 1,100 + 50
+      [1180, 30],
+    ])
+    // Last pallet ends 30 mm + spare before the door, never closer than the wall clearance.
+    expect(Math.max(...result.placements.map((p) => p.x + p.length))).toBeLessThanOrEqual(6200 - 30)
+    expectValidPlan(truck, items, result.placements, clearance)
+  })
+
+  it('puts the tier cushion between stacked pieces only when enabled', () => {
+    const items = [cargo({ length: 1100, width: 1100, height: 1180, quantity: 4, weight: 300 })]
+    const flat = analyzePacking(c20, items)
+    expect(flat.placements.map((p) => p.z)).toEqual([0, 0, 1180, 1180]) // 2 × 1,180 = 2,360 ≤ 2,393
+    const thin = analyzePacking(c20, items, { gap: 0, wall: 0, stack: 20 })
+    expect(thin.placements.map((p) => p.z)).toEqual([0, 0, 1200, 1200])
+    const thick = analyzePacking(c20, items, { gap: 0, wall: 0, stack: 50 })
+    expect(thick.placements.map((p) => p.z)).toEqual([0, 0, 0, 0]) // 2,410 mm would exceed the roof
+    expectValidPlan(c20, items, thin.placements, { gap: 0, wall: 0, stack: 20 })
+  })
+
+  it('keeps extra cushioning around a single cargo row', () => {
+    const items = [
+      cargo({ length: 1000, width: 1000, height: 1000, margin: 100 }),
+      cargo({ length: 1000, width: 1000, height: 1000 }),
+    ]
+    const result = analyzePacking(c20, items)
+    expect(result.placements.map((p) => [p.item, p.x, p.y])).toEqual([
+      [0, 100, 100], // 100 mm of its own cushioning toward the walls
+      [1, 0, 1200], // and 100 mm to its neighbour
+    ])
+    expectValidPlan(c20, items, result.placements)
+  })
+
+  it('reports the net cargo volume and the gross volume including cushioning', () => {
+    const items = [cargo({ length: 1100, width: 1100, height: 1000, quantity: 4 })]
+    const clearance = { gap: 50, wall: 30, stack: 20 }
+    const result = analyzePacking(c20, items, clearance)
+    expect(result.totalVolume).toBeCloseTo(4 * 1.21, 9)
+    expect(result.loadedVolume).toBeCloseTo(4 * 1.21, 9)
+    expect(result.totalGrossVolume).toBeCloseTo(4 * 1.15 * 1.15 * 1.02, 9)
+    expect(result.loadedGrossVolume).toBeCloseTo(4 * 1.15 * 1.15 * 1.02, 9)
+    expect(result.grossVolumeRatio).toBeCloseTo((4 * 1.15 * 1.15 * 1.02) / 33.2, 9)
+    // No cushioning: gross = net.
+    const plain = analyzePacking(c20, items)
+    expect(plain.loadedGrossVolume).toBeCloseTo(plain.loadedVolume, 9)
+  })
+
+  it('rejects pieces that only fit without the wall clearance', () => {
+    const items = [cargo({ length: 2300, width: 1000, height: 1000, rotatable: true })]
+    const truck = getContainerSpec('2t') // 1,780 mm wide: a 2,300 mm piece must lie lengthwise anyway
+    expect(analyzePacking(truck, items, { gap: 0, wall: 0, stack: 0 }).loadedPieces).toBe(1)
+    const tight = analyzePacking(getContainerSpec('4t'), [cargo({ length: 2350, width: 6150, height: 500, rotatable: false })], {
+      gap: 0,
+      wall: 30,
+      stack: 0,
+    })
+    expect(tight.oversize).toEqual([0]) // 2,350 > 2,380 − 2 × 30
   })
 
   it('simulates at most MAX_PIECES pieces', () => {
@@ -273,6 +406,12 @@ describe('container / truck suggestions', () => {
     expect(sea.best).toBeNull()
     expect(sea.plans.map((p) => p.blocked)).toEqual(['size', 'size', 'door'])
     expect(suggestForCategory(tall, 'truck').plans.map((p) => p.blocked)).toEqual(['size', 'size', 'size'])
+  })
+
+  it('still suggests one 4t truck for the sample with the truck cushioning defaults', () => {
+    const truck = suggestForCategory(sample, 'truck', toClearance(DEFAULT_CUSHIONING.truck))
+    expect(truck.best?.spec.id).toBe('4t')
+    expect(truck.best?.units).toBe(1)
   })
 
   it('summarizes the shipment for the English e-mail', () => {
