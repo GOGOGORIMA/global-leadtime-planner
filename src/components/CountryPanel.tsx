@@ -1,6 +1,14 @@
 import { Check, Globe, Plus, Search, Settings2, X } from 'lucide-react'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch } from 'react'
-import { DEFAULT_WORK_END, DEFAULT_WORK_START, PRESET_PARTNER_COUNTRIES, getCountryCatalog, getCountryInfo, getDefaultWeekend } from '../data/countries'
+import {
+  DEFAULT_WORK_END,
+  DEFAULT_WORK_START,
+  PRESET_PARTNER_COUNTRIES,
+  getCountryCatalog,
+  getCountryInfo,
+  getDefaultRegion,
+  getDefaultWeekend,
+} from '../data/countries'
 import type { PlannerAction } from '../state/plannerReducer'
 import type { ResolvedCountry } from '../utils/calendars'
 import { formatWeekendJa } from '../utils/dateFormat'
@@ -25,7 +33,8 @@ function customizations(country: ResolvedCountry): string[] {
   if (country.workStart !== DEFAULT_WORK_START || country.workEnd !== DEFAULT_WORK_END) {
     notes.push(`${formatClock(country.workStart)}–${formatClock(country.workEnd)}`)
   }
-  if (country.regionName) notes.push(country.regionName)
+  // The default holiday region (United Kingdom → England) is not a customization.
+  if (country.regionName && country.region !== getDefaultRegion(country.code)) notes.push(country.regionName)
   return notes
 }
 
@@ -263,7 +272,7 @@ export function CountryPanel({ countries, dispatch, onOpenSettings, now }: Count
 
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <span className={cx(labelClass, 'mb-0')}>比較対象国（{partners.length}）</span>
+            <span className={cx(labelClass, 'mb-0')}>比較対象国 ({partners.length})</span>
             {partners.length > 0 && (
               <button
                 type="button"

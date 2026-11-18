@@ -1,4 +1,4 @@
-# CLAUDE.md — B2B Global Lead-Time Planner
+# CLAUDE.md — Global Planner（B2B）
 
 海外営業・貿易実務向けの「時差・現地祝日統合型の納期逆算＆日程調整 Web アプリ」。
 コンテナ・トラックへの積み付けを 3D で確認できる「積載 3D シミュレーター（バンニング計算機）」と、EXW 価格に物流諸掛・保険・関税を
@@ -42,11 +42,11 @@ index.html                 lang="ja"。favicon は public/favicon.svg
 vite.config.ts             base: './'（必須。リポジトリ名に依存せずサブパスで動作）・vendor/react チャンク分割
 tsconfig.{app,node,test}.json  app はテスト除外 / test は node 型を含む
 src/
-  main.tsx, App.tsx        ルート。左ペイン（固定）＋右ペイン（6 タブ）のレイアウトと、派生データ
+  main.tsx, App.tsx        main.tsx は描画前に LocalStorage の旧キーを移行（`migrateLegacyStorage`）。App は左ペイン（固定）＋右ペイン（6 タブ）のレイアウトと、派生データ
                            （国設定→カレンダー→スケジュール→レポート）の useMemo による組み立て
   index.css                Tailwind 読み込み・テーマ・独自ユーティリティ
   types.ts                 PlannerState / Step / CountrySettings / DayOverride / CALENDAR_DAYS / PLANNER_TABS
-  data/countries.ts        国カタログ（名称 EN/JA・既定 TZ・既定週末・地域）とプリセット
+  data/countries.ts        国カタログ（名称 EN/JA・既定 TZ・既定週末・地域・既定の祝日地域）とプリセット 6 か国
   data/flags.ts            国旗画像の URL 解決：flagcdn.com（主）／同梱の flag-icons SVG（フォールバック。import.meta.glob で個別アセット）
   data/holidayCorrections.ts  date-holidays と公式祝日一覧の差分補正（現在は AE。出典付き）
   data/containers.ts       海上コンテナ 3 種・国内トラック 3 種の内寸/ドア開口高/最大積載/容積、定型パレット寸法
@@ -70,7 +70,7 @@ src/
   utils/exportText.ts      英文テキスト生成：Standard Email / WhatsApp / Meeting Proposal / Price Quotation
                            ＋ Packing & Container Summary・Incoterms Price Quotation の追記（純粋関数）
   utils/urlState.ts        状態 ⇄ URL クエリ文字列
-  utils/storage.ts         LocalStorage（プリセット・前回状態・出力設定）。全アクセス try/catch
+  utils/storage.ts         LocalStorage（プリセット・前回状態・出力設定、`gp:v2:` キー＋旧 `glp:v1:` からの移行）。全アクセス try/catch
   utils/clipboard.ts       クリップボードコピー（非セキュアコンテキスト用フォールバック付き）
   components/              UI（下記）。classes.ts = 共有クラス文字列、styles.ts = 日ステータス/工程の配色、
                            CountryFlag.tsx = 国旗画像（絵文字は使わない）、tabIds.ts = タブ／タブパネルの DOM id、
@@ -82,9 +82,9 @@ src/
 
 | コンポーネント | 役割 |
 | --- | --- |
-| `AppHeader` | 共有 URL コピー、プリセット保存/読込/削除（LocalStorage）、リセット |
+| `AppHeader` | タイトル「Global Planner」、共有 URL コピー、プリセット保存/読込/削除（LocalStorage）、リセット |
 | `TabBar` | 右ペインの 6 タブ切り替え（Lucide アイコン付きピル型。WAI-ARIA tabs、←/→/Home/End で移動） |
-| `CountryPanel` | 基準国 select、比較対象国チップ（国旗＋国名・現地時刻＋TZ 略称・⚙設定・×削除）、プリセット 9 か国トグル、国検索コンボボックス |
+| `CountryPanel` | 基準国 select、比較対象国チップ（見出し `比較対象国 (6)`。国旗＋国名・現地時刻＋TZ 略称・⚙設定・×削除）、プリセット 6 か国トグル、国検索コンボボックス |
 | `CountrySettingsModal` | 国ごとのタイムゾーン・地域（州）・週末（曜日トグル）・営業時間 |
 | `MeetingPlanner` | 基準国時間の 24h 軸に各国営業時間バー（祝日/週末はハッチ）、基準国の営業時間帯（破線の薄緑帯）、全員の重なり、全行を貫く現在時刻線、ホバーで各国現地時刻 |
 | `SchedulePanel` | 順算/逆算切替、基準日、工程（名称・日数・適用カレンダー・並べ替え・削除・テンプレート）、計算結果サマリーカード（最終納期・発注デッドライン・総所要日数・祝日でスキップした日数と祝日名）、「ガントチャートで確認する →」 |
@@ -106,7 +106,7 @@ src/
 - **全体**：ヘッダー（非固定）の下に `<main className="flex flex-row items-start gap-6 max-w-[1600px] mx-auto px-6 py-5">`。
   **ブレークポイントなしで常に左右 2 ペイン**（縦積みにしない）。ルートは `min-w-[1000px]` で、それより狭いウィンドウは横スクロール。
 - **左ペイン（常時固定）**：`<aside className="w-[330px] min-w-[330px] shrink-0 sticky top-5 max-h-[calc(100vh-2.5rem)] overflow-y-auto">`。
-  対象国と営業時間（基準国 select、比較対象国チップ、プリセット 9 か国、国検索）。国は「国旗画像＋日本語国名」。
+  対象国と営業時間（基準国 select、比較対象国チップ、プリセット 6 か国、国検索）。国は「国旗画像＋日本語国名」。
   フッター（データ出典）は右ペインの中に置く（全幅のフッターだとページ末尾で sticky の左ペインが押し上げられて上端が隠れるため）。
 - **右ペイン**：`flex-1 min-w-0`。上部にタブバー（`TabBar`）、その下に**選択中のタブだけ**を描画（`role="tabpanel"`）。
   タブ状態は `PlannerState.tab` に保持し、URL の `?tab=` と同期する。
@@ -198,8 +198,15 @@ src/
 
 ### 国・タイムゾーン・週末
 - カタログ = date-holidays 対応国（約 207）＋祝日データなしの追加国（KH, LA, MM, NP, MN, QA, KW, OM, JO, IQ, MV。週末と TZ のみ）。名称は `Intl.DisplayNames`（EN long / JA short）。
-- 初期状態：基準国 日本、比較対象は 韓国・台湾・中国・アメリカ・タイ・マレーシア・インド・ベトナム・シンガポール の 9 か国をこの順に表示
-  （`PRESET_PARTNER_COUNTRIES = KR, TW, CN, US, TH, MY, IN, VN, SG`。プリセットとしてワンクリック追加/解除も可）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 → TH 営業日 3 日）、表示タブ = 会議可能時間帯。
+- 初期状態：基準国 日本（Asia/Tokyo・JST）、比較対象は 韓国（Asia/Seoul・KST）・中国（Asia/Shanghai・CST）・アメリカ（America/New_York・EST/EDT）・
+  イギリス（Europe/London・GMT/BST）・ドイツ（Europe/Berlin・CET/CEST）・インド（Asia/Kolkata・IST、UTC+5:30）の 6 か国をこの順に表示
+  （`PRESET_PARTNER_COUNTRIES = KR, CN, US, GB, DE, IN`。プリセットとしてワンクリック追加/解除も可。台湾・タイ・マレーシア・ベトナム・シンガポール等は
+  カタログに残り、検索から追加できる）、営業時間 09:00–18:00、逆算モード、希望納品日 = 今日 + 60 日、工程 = 基本 3 工程（JP 営業日 20 日 → 暦日 21 日 →
+  先頭の比較対象国 = 韓国の営業日 3 日。テンプレートの「相手国」は `pickDefaultPartner` = 先頭の比較対象国）、表示タブ = 会議可能時間帯。
+- 日本語の国名は `Intl.DisplayNames`（JA short）。読みにくいものは `NAME_JA_OVERRIDES` で上書き（GB:「英国」→「イギリス」）。
+- 既定の祝日地域（`getDefaultRegion`）：GB → England（`ENG`）。UK の祝日は地域で異なり、UK 共通データには 8 月の Summer bank holiday が無いため、
+  設定がなければイングランド（England & Wales）の Bank Holidays を使う。国設定ダイアログでは既定地域に「（既定）」を付け「全国」の選択肢を出さない
+  （既定地域を選ぶと設定なし＝URL に出さない）。国チップの補足には既定地域を表示しない。
 - 既定の週末：土日（UAE も 2022 年から土日）。金土 = SA, EG, QA, KW, BH, OM, JO, IL, BD, DZ, IQ, LY, SD, MV／金のみ = IR／金日 = BN／土のみ = NP／マレーシアのケダ・クランタン・トレンガヌ州（MY-02/03/11）は金土。国ごとに UI で上書き可能。
 - タイムゾーン候補：US/CA/AU/BR/MX/RU は主要都市の厳選リスト、他は date-holidays の zones。地域を選ぶとその地域の TZ が既定になる（例 US-CA → America/Los_Angeles）。DST は Intl が自動反映。
 - タイムゾーン略称：DST のない主要ゾーンは固定表記（JST, KST, CST〔中国・台湾〕, ICT, MYT, SGT, IST, WIB など）、DST のあるゾーンは Intl（EST/EDT, CET/CEST…）、
@@ -310,15 +317,16 @@ src/
 - LCL の R/T = max(V, W / 1000)、最小 1.0 R/T。Air の課金重量 = max(W, V × 167 kg)。
 
 ### 目安レート（`utils/freightRates.ts`、日本の主要港・空港発、通常期の概算）
-- 国際運賃（USD）：専用航路 41 か国（代表港つき。例 TH Laem Chabang 20ft 350 / 40ft 650 / LCL 30 per R/T / Air 2.8 per kg）＋
-  10 地域（東アジア〜オセアニア）の目安。全カタログ国を地域に割り当て済み（テストで網羅を検証）。40ft HQ は 40ft と同額。
+- 国際運賃（USD）：専用航路 41 か国（代表港つき。例 TH Laem Chabang 20ft 350 / 40ft 650 / 40ft HQ 700 / LCL 30 per R/T / Air 2.8 per kg）＋
+  10 地域（東アジア〜オセアニア）の目安。全カタログ国を地域に割り当て済み（テストで網羅を検証）。40ft HQ（`fcl40hc`）は 40ft ＋ US$50（アジア域内）/
+  ＋ US$100（その他）。欧州は GB Felixstowe / Southampton 20ft 1,600 / 40ft 2,800 / HQ 2,900、DE Hamburg 1,500 / 2,600 / 2,700（LCL 85・80 per R/T、Air 4.8 per kg）。
   Air は最低料金 US$80。**市況係数**：通常期 1.0 / 繁忙期 1.5 / 高騰期 2.5（テーブル運賃にだけ掛け、上書き運賃には掛けない）。
 - 国内トラック（円/台）：2t 35,000 / 4t 55,000 / 10t 95,000。
 - 輸出通関・港湾諸掛（円）：FCL 1 本あたり THC 20ft 45,000・40ft 64,000、バンニング 35,000・52,000、シール 1,800 ／ LCL CFS・THC 6,000 per R/T ／
   Air 上屋・取扱・X線 35 円/kg（最低 6,000）＋ 1 件あたり 輸出通関料 11,800・B/L 6,000（Air は AWB 5,000）。
 - 現地諸掛（DAP、USD）：地域ごとのプリセット（例 東南アジア 20ft 400 / 40ft 550 / LCL 90 + 40 per R/T / Air 90 + 0.3 per kg）。
 - 既定値：EXW 5,000,000 円、USD（実勢 150・バッファ 3%）、FCL、仕向地 = 自動（工程の相手国：最終の相手国カレンダー工程 → 先頭の比較対象国、
-  日本は除外、なければ米国。**URL の状態だけで決まる**ので共有リンクで同じ価格になる）、通常期、運賃変動バッファ 10%、保険料率 0.20%、
+  日本は除外、なければ米国。初期状態では韓国。**URL の状態だけで決まる**ので共有リンクで同じ価格になる）、通常期、運賃変動バッファ 10%、保険料率 0.20%、
   関税 5.0%、見積有効期限 = 今日 + 14 日（`validUntil = null`）。繁忙期・高騰期は有効期限 7〜14 日を促す注意書き、過去日はエラー表示。
 
 ## URL クエリ（共有リンク）
@@ -355,7 +363,9 @@ src/
   見積（`sanitizeQuote`）は q* キーを**初期値と違うものだけ出力**し、ないキーは初期値（現在の状態ではない）。EXW 0〜1,000 億円、諸掛・運賃 0〜10 億円、
   レートは正の数（4 桁）・不正なら通貨の目安レート、為替バッファ 0〜10%、運賃変動バッファ 0〜30%、保険料率 0〜5%、関税 0〜30%、
   仕向地は既知の国のみ（日本＝出発国は不可 → 自動）、コンテナは海上規格・トラックはトラック規格のみ・数量 1〜99、日付不正は自動（14 日後）。
-- LocalStorage キー：`glp:v1:presets`（名前付きプリセット = クエリ文字列）、`glp:v1:last-query`、`glp:v1:export-options`（宛名・署名等。**URL には含めない**）。
+- LocalStorage キー：`gp:v2:presets`（名前付きプリセット = クエリ文字列）、`gp:v2:last-query`（前回状態）、`gp:v2:export-options`（宛名・署名等。**URL には含めない**）。
+  旧キー `glp:v1:*`（改名前の旧バージョン）は起動時に `migrateLegacyStorage` がプリセットと出力設定だけを移し、前回状態は破棄する
+  （旧 9 か国の国リストがキャッシュから復元されず、新しい 6 か国プリセットが表示される）。リセットボタンも常に 6 か国の初期状態に戻す。
 
 ## 英文出力（`report.ts` → `exportText.ts`）
 
@@ -384,12 +394,14 @@ src/
 
 ## テスト
 
-`src/utils/*.test.ts`（124 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット 9 か国の順序と日本語名、全カタログ国の国旗 SVG の有無・日本語名の重複なし、台湾（UTC+8・旧正月）・インド（UTC+5:30・日本との重なり 5.5 時間）、UAE の週末・複数日のイード、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力（`tab` を含む）、リデューサ、英文出力（Meeting Proposal の候補表示と重なりなしの文面、Packing & Container Summary を含む）、積載シミュレーター（規格データ、床面いっぱいのパレット数、2 段積み、回転の可否、ドア開口高、最大積載、重量順・段積み不可、ランダム 36 ケースの物理ルール検証（半数は緩衝材・個別緩衝材をランダムに設定）、1,000 個の性能、規格・台数の提案、
+`src/utils/*.test.ts`（130 件）：日付プリミティブ（1900–2100 全日のラウンドトリップ）、プリセット 6 か国の順序・日本語名・既定 TZ、
+イギリス（「イギリス」表記、イングランドの Bank Holidays、スコットランド選択時）・ドイツ（国の祝日、半日のクリスマスイブは稼働日）、
+GMT/BST・CET/CEST・EST/EDT・IST の略称と日本との営業時間の重なり、LocalStorage の旧キー移行、全カタログ国の国旗 SVG の有無・日本語名の重複なし、台湾（UTC+8・旧正月）・インド（UTC+5:30・日本との重なり 5.5 時間）、UAE の週末・複数日のイード、UAE 祝日補正（30 Ramadan の有無、アラファの日、National Day 2 日間、他国に影響しないこと）、稼働日演算、順算/逆算（400 ケースの不変条件チェック）、実行時 TZ を切り替えても結果が不変であること、date-holidays ラッパー（複数日・半日・地域・現地名対応）、国カタログ、タイムゾーン/DST/重なり計算、URL ラウンドトリップと不正入力（`tab` を含む）、リデューサ、英文出力（Meeting Proposal の候補表示と重なりなしの文面、Packing & Container Summary を含む）、積載シミュレーター（規格データ、床面いっぱいのパレット数、2 段積み、回転の可否、ドア開口高、最大積載、重量順・段積み不可、ランダム 36 ケースの物理ルール検証（半数は緩衝材・個別緩衝材をランダムに設定）、1,000 個の性能、規格・台数の提案、
 緩衝材（貨物間の隙間、壁面クリアランス、陸路の初期値、上下段の緩衝材、個別緩衝材、正味/実質占有の容積、クリアランス込みの寸法超過））、
 貨物と緩衝材の URL ラウンドトリップと不正入力、緩衝材のリデューサ、
 輸出見積（全カタログ国の運賃地域の網羅、専用航路の妥当性、市況係数、モード別の課金単位、輸出諸掛・国内トラック・現地諸掛、
 R/T・課金重量・適用レート、EXW→DDP の積み上げの具体値、保険の循環参照を含む 200 ケースの不変条件、タブ⑤からの連動（選択規格・自動判定・
-複数本・規格外・貨物なし）、上書き・市況・通貨換算・有効期限・仕向地の解決、q* キーの URL ラウンドトリップと不正入力、見積のリデューサ、
+複数本・規格外・貨物なし）、40ft HQ の運賃、上書き・市況・通貨換算・有効期限・仕向地の解決、q* キーの URL ラウンドトリップと不正入力、見積のリデューサ、
 英文の Price Quotation（単独メール・メール/WhatsApp への追記、LCL・Air・JPY・高騰期の文面））。
 
 ## デプロイ

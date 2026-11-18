@@ -542,7 +542,8 @@ export function QuoteSettingsForm({ quote, result, countries, autoDestination, o
               {lane.estimated
                 ? `専用の運賃データがないため、${FREIGHT_REGION_LABELS[lane.region]}の目安運賃を使用しています。`
                 : `代表港：${lane.port}（${FREIGHT_REGION_LABELS[lane.region]}）。`}
-              通常期：20ft {usd(lane.fcl20)} ／ 40ft {usd(lane.fcl40)} ／ LCL {usd(lane.lcl)}/R/T ／ Air {usd(lane.air, 2)}/kg
+              通常期：20ft {usd(lane.fcl20)} ／ 40ft {usd(lane.fcl40)} ／ 40ft HQ {usd(lane.fcl40hc)} ／ LCL {usd(lane.lcl)}/R/T ／ Air{' '}
+              {usd(lane.air, 2)}/kg
             </Hint>
           </div>
           <div>

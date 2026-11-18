@@ -6,6 +6,7 @@ import {
   DEFAULT_WORK_END,
   DEFAULT_WORK_START,
   getCountryInfo,
+  getDefaultRegion,
   getDefaultWeekend,
   getRegionName,
   getRegionOptions,
@@ -40,8 +41,11 @@ export interface ResolvedCountry {
 }
 
 export function resolveCountry(code: string, settings: CountrySettings | undefined, isBase = false): ResolvedCountry {
+  // An explicit valid region, else the country's default holiday region (United Kingdom → England).
   const region =
-    settings?.region && getRegionOptions(code).some((r) => r.code === settings.region) ? settings.region : undefined
+    settings?.region && getRegionOptions(code).some((r) => r.code === settings.region)
+      ? settings.region
+      : getDefaultRegion(code)
   const timeZone =
     settings?.timeZone && isValidTimeZone(settings.timeZone) ? settings.timeZone : getTimeZoneOptions(code, region)[0]
   let workStart = settings?.workStart ?? DEFAULT_WORK_START

@@ -97,9 +97,9 @@ export function instantiateSteps(definitions: readonly StepDefinition[]): Step[]
   return definitions.map((d) => ({ ...d, id: createId() }))
 }
 
-/** The partner used for "相手国営業日" defaults: Thailand when selected, else the first partner. */
+/** The partner used for "相手国営業日" defaults in step templates: the first partner (else the base). */
 export function pickDefaultPartner(base: string, partners: readonly string[]): string {
-  return partners.includes('TH') ? 'TH' : (partners[0] ?? base)
+  return partners[0] ?? base
 }
 
 export interface StepTemplate {

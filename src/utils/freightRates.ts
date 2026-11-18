@@ -63,6 +63,8 @@ export interface FreightRates {
   /** Ocean freight per container (USD; base rate incl. BAF, excl. origin / destination charges). */
   fcl20: number
   fcl40: number
+  /** 40ft High Cube: 40ft + US$50 within Asia, + US$100 on the other trades. */
+  fcl40hc: number
   /** LCL ocean freight per revenue ton (USD / R/T, W/M). */
   lcl: number
   /** Air freight per chargeable kg (USD, incl. fuel / security surcharges, +100 kg break). */
@@ -79,61 +81,61 @@ export interface FreightLane extends FreightRates {
 
 /** Dedicated lanes from Japan (normal market). */
 const LANES: Readonly<Record<string, FreightRates & { port: string }>> = {
-  KR: { port: 'Busan', fcl20: 200, fcl40: 350, lcl: 15, air: 2.2 },
-  CN: { port: 'Shanghai', fcl20: 250, fcl40: 450, lcl: 15, air: 2.5 },
-  TW: { port: 'Keelung / Kaohsiung', fcl20: 280, fcl40: 500, lcl: 25, air: 2.4 },
-  HK: { port: 'Hong Kong', fcl20: 300, fcl40: 550, lcl: 25, air: 2.6 },
-  MN: { port: 'Ulaanbaatar (via Tianjin)', fcl20: 1800, fcl40: 3000, lcl: 120, air: 4.5 },
-  TH: { port: 'Laem Chabang', fcl20: 350, fcl40: 650, lcl: 30, air: 2.8 },
-  VN: { port: 'Ho Chi Minh City / Haiphong', fcl20: 350, fcl40: 650, lcl: 30, air: 2.8 },
-  SG: { port: 'Singapore', fcl20: 300, fcl40: 550, lcl: 25, air: 2.6 },
-  MY: { port: 'Port Klang', fcl20: 380, fcl40: 700, lcl: 30, air: 2.8 },
-  ID: { port: 'Jakarta', fcl20: 450, fcl40: 800, lcl: 35, air: 3 },
-  PH: { port: 'Manila', fcl20: 450, fcl40: 800, lcl: 35, air: 3 },
-  IN: { port: 'Nhava Sheva / Chennai', fcl20: 800, fcl40: 1400, lcl: 55, air: 3.8 },
-  PK: { port: 'Karachi', fcl20: 1000, fcl40: 1700, lcl: 65, air: 4.2 },
-  BD: { port: 'Chittagong', fcl20: 1000, fcl40: 1800, lcl: 65, air: 4.2 },
-  LK: { port: 'Colombo', fcl20: 800, fcl40: 1400, lcl: 55, air: 3.8 },
-  AE: { port: 'Jebel Ali', fcl20: 1200, fcl40: 2000, lcl: 65, air: 4.2 },
-  SA: { port: 'Dammam / Jeddah', fcl20: 1400, fcl40: 2400, lcl: 75, air: 4.5 },
-  US: { port: 'Los Angeles / Long Beach', fcl20: 1700, fcl40: 2200, lcl: 75, air: 4.8 },
-  CA: { port: 'Vancouver', fcl20: 1800, fcl40: 2400, lcl: 80, air: 5 },
-  MX: { port: 'Manzanillo', fcl20: 1900, fcl40: 2800, lcl: 95, air: 5.5 },
-  BR: { port: 'Santos', fcl20: 2600, fcl40: 4200, lcl: 130, air: 7 },
-  CL: { port: 'San Antonio', fcl20: 2300, fcl40: 3800, lcl: 120, air: 6.5 },
-  PE: { port: 'Callao', fcl20: 2200, fcl40: 3600, lcl: 115, air: 6.5 },
-  CO: { port: 'Buenaventura / Cartagena', fcl20: 2400, fcl40: 3900, lcl: 120, air: 6.5 },
-  AR: { port: 'Buenos Aires', fcl20: 2800, fcl40: 4500, lcl: 140, air: 7.5 },
-  DE: { port: 'Hamburg', fcl20: 1500, fcl40: 2600, lcl: 80, air: 4.8 },
-  NL: { port: 'Rotterdam', fcl20: 1500, fcl40: 2600, lcl: 80, air: 4.8 },
-  BE: { port: 'Antwerp', fcl20: 1500, fcl40: 2600, lcl: 80, air: 4.8 },
-  GB: { port: 'Felixstowe / Southampton', fcl20: 1600, fcl40: 2800, lcl: 85, air: 4.8 },
-  FR: { port: 'Le Havre', fcl20: 1600, fcl40: 2800, lcl: 85, air: 4.8 },
-  IT: { port: 'Genoa', fcl20: 1700, fcl40: 3000, lcl: 90, air: 4.8 },
-  ES: { port: 'Valencia / Barcelona', fcl20: 1700, fcl40: 3000, lcl: 90, air: 4.8 },
-  PL: { port: 'Gdansk', fcl20: 1700, fcl40: 2900, lcl: 90, air: 5 },
-  TR: { port: 'Istanbul / Mersin', fcl20: 1800, fcl40: 3100, lcl: 95, air: 5 },
-  RU: { port: 'Vladivostok', fcl20: 1500, fcl40: 2500, lcl: 90, air: 6 },
-  ZA: { port: 'Durban', fcl20: 2200, fcl40: 3600, lcl: 110, air: 6 },
-  EG: { port: 'Alexandria / Port Said', fcl20: 1900, fcl40: 3200, lcl: 100, air: 5.5 },
-  KE: { port: 'Mombasa', fcl20: 2400, fcl40: 3900, lcl: 120, air: 6 },
-  NG: { port: 'Lagos (Apapa)', fcl20: 2800, fcl40: 4600, lcl: 140, air: 7 },
-  AU: { port: 'Sydney / Melbourne', fcl20: 900, fcl40: 1600, lcl: 60, air: 4 },
-  NZ: { port: 'Auckland', fcl20: 1100, fcl40: 1900, lcl: 70, air: 4.5 },
+  KR: { port: 'Busan', fcl20: 200, fcl40: 350, fcl40hc: 400, lcl: 15, air: 2.2 },
+  CN: { port: 'Shanghai', fcl20: 250, fcl40: 450, fcl40hc: 500, lcl: 15, air: 2.5 },
+  TW: { port: 'Keelung / Kaohsiung', fcl20: 280, fcl40: 500, fcl40hc: 550, lcl: 25, air: 2.4 },
+  HK: { port: 'Hong Kong', fcl20: 300, fcl40: 550, fcl40hc: 600, lcl: 25, air: 2.6 },
+  MN: { port: 'Ulaanbaatar (via Tianjin)', fcl20: 1800, fcl40: 3000, fcl40hc: 3100, lcl: 120, air: 4.5 },
+  TH: { port: 'Laem Chabang', fcl20: 350, fcl40: 650, fcl40hc: 700, lcl: 30, air: 2.8 },
+  VN: { port: 'Ho Chi Minh City / Haiphong', fcl20: 350, fcl40: 650, fcl40hc: 700, lcl: 30, air: 2.8 },
+  SG: { port: 'Singapore', fcl20: 300, fcl40: 550, fcl40hc: 600, lcl: 25, air: 2.6 },
+  MY: { port: 'Port Klang', fcl20: 380, fcl40: 700, fcl40hc: 750, lcl: 30, air: 2.8 },
+  ID: { port: 'Jakarta', fcl20: 450, fcl40: 800, fcl40hc: 850, lcl: 35, air: 3 },
+  PH: { port: 'Manila', fcl20: 450, fcl40: 800, fcl40hc: 850, lcl: 35, air: 3 },
+  IN: { port: 'Nhava Sheva / Chennai', fcl20: 800, fcl40: 1400, fcl40hc: 1500, lcl: 55, air: 3.8 },
+  PK: { port: 'Karachi', fcl20: 1000, fcl40: 1700, fcl40hc: 1800, lcl: 65, air: 4.2 },
+  BD: { port: 'Chittagong', fcl20: 1000, fcl40: 1800, fcl40hc: 1900, lcl: 65, air: 4.2 },
+  LK: { port: 'Colombo', fcl20: 800, fcl40: 1400, fcl40hc: 1500, lcl: 55, air: 3.8 },
+  AE: { port: 'Jebel Ali', fcl20: 1200, fcl40: 2000, fcl40hc: 2100, lcl: 65, air: 4.2 },
+  SA: { port: 'Dammam / Jeddah', fcl20: 1400, fcl40: 2400, fcl40hc: 2500, lcl: 75, air: 4.5 },
+  US: { port: 'Los Angeles / Long Beach', fcl20: 1700, fcl40: 2200, fcl40hc: 2300, lcl: 75, air: 4.8 },
+  CA: { port: 'Vancouver', fcl20: 1800, fcl40: 2400, fcl40hc: 2500, lcl: 80, air: 5 },
+  MX: { port: 'Manzanillo', fcl20: 1900, fcl40: 2800, fcl40hc: 2900, lcl: 95, air: 5.5 },
+  BR: { port: 'Santos', fcl20: 2600, fcl40: 4200, fcl40hc: 4300, lcl: 130, air: 7 },
+  CL: { port: 'San Antonio', fcl20: 2300, fcl40: 3800, fcl40hc: 3900, lcl: 120, air: 6.5 },
+  PE: { port: 'Callao', fcl20: 2200, fcl40: 3600, fcl40hc: 3700, lcl: 115, air: 6.5 },
+  CO: { port: 'Buenaventura / Cartagena', fcl20: 2400, fcl40: 3900, fcl40hc: 4000, lcl: 120, air: 6.5 },
+  AR: { port: 'Buenos Aires', fcl20: 2800, fcl40: 4500, fcl40hc: 4600, lcl: 140, air: 7.5 },
+  DE: { port: 'Hamburg', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 },
+  NL: { port: 'Rotterdam', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 },
+  BE: { port: 'Antwerp', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 },
+  GB: { port: 'Felixstowe / Southampton', fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 4.8 },
+  FR: { port: 'Le Havre', fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 4.8 },
+  IT: { port: 'Genoa', fcl20: 1700, fcl40: 3000, fcl40hc: 3100, lcl: 90, air: 4.8 },
+  ES: { port: 'Valencia / Barcelona', fcl20: 1700, fcl40: 3000, fcl40hc: 3100, lcl: 90, air: 4.8 },
+  PL: { port: 'Gdansk', fcl20: 1700, fcl40: 2900, fcl40hc: 3000, lcl: 90, air: 5 },
+  TR: { port: 'Istanbul / Mersin', fcl20: 1800, fcl40: 3100, fcl40hc: 3200, lcl: 95, air: 5 },
+  RU: { port: 'Vladivostok', fcl20: 1500, fcl40: 2500, fcl40hc: 2600, lcl: 90, air: 6 },
+  ZA: { port: 'Durban', fcl20: 2200, fcl40: 3600, fcl40hc: 3700, lcl: 110, air: 6 },
+  EG: { port: 'Alexandria / Port Said', fcl20: 1900, fcl40: 3200, fcl40hc: 3300, lcl: 100, air: 5.5 },
+  KE: { port: 'Mombasa', fcl20: 2400, fcl40: 3900, fcl40hc: 4000, lcl: 120, air: 6 },
+  NG: { port: 'Lagos (Apapa)', fcl20: 2800, fcl40: 4600, fcl40hc: 4700, lcl: 140, air: 7 },
+  AU: { port: 'Sydney / Melbourne', fcl20: 900, fcl40: 1600, fcl40hc: 1700, lcl: 60, air: 4 },
+  NZ: { port: 'Auckland', fcl20: 1100, fcl40: 1900, fcl40hc: 2000, lcl: 70, air: 4.5 },
 }
 
 /** Estimates for the other countries of each region (smaller / less served markets cost more). */
 const REGION_RATES: Readonly<Record<FreightRegion, FreightRates>> = {
-  eastAsia: { fcl20: 400, fcl40: 700, lcl: 35, air: 3 },
-  southeastAsia: { fcl20: 600, fcl40: 1100, lcl: 45, air: 3.5 },
-  southAsia: { fcl20: 1500, fcl40: 2600, lcl: 90, air: 5 },
-  middleEast: { fcl20: 1600, fcl40: 2800, lcl: 85, air: 5 },
-  europe: { fcl20: 1900, fcl40: 3300, lcl: 100, air: 5.2 },
-  russiaCis: { fcl20: 2500, fcl40: 4000, lcl: 130, air: 6.5 },
-  northAmerica: { fcl20: 2800, fcl40: 4200, lcl: 130, air: 6 },
-  latinAmerica: { fcl20: 3000, fcl40: 4800, lcl: 150, air: 7.5 },
-  africa: { fcl20: 3000, fcl40: 5000, lcl: 150, air: 7.5 },
-  oceania: { fcl20: 2000, fcl40: 3500, lcl: 120, air: 6 },
+  eastAsia: { fcl20: 400, fcl40: 700, fcl40hc: 750, lcl: 35, air: 3 },
+  southeastAsia: { fcl20: 600, fcl40: 1100, fcl40hc: 1150, lcl: 45, air: 3.5 },
+  southAsia: { fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 90, air: 5 },
+  middleEast: { fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 5 },
+  europe: { fcl20: 1900, fcl40: 3300, fcl40hc: 3400, lcl: 100, air: 5.2 },
+  russiaCis: { fcl20: 2500, fcl40: 4000, fcl40hc: 4100, lcl: 130, air: 6.5 },
+  northAmerica: { fcl20: 2800, fcl40: 4200, fcl40hc: 4300, lcl: 130, air: 6 },
+  latinAmerica: { fcl20: 3000, fcl40: 4800, fcl40hc: 4900, lcl: 150, air: 7.5 },
+  africa: { fcl20: 3000, fcl40: 5000, fcl40hc: 5100, lcl: 150, air: 7.5 },
+  oceania: { fcl20: 2000, fcl40: 3500, fcl40hc: 3600, lcl: 120, air: 6 },
 }
 
 /** Freight region of every destination (ISO 3166-1 alpha-2). */
@@ -185,7 +187,7 @@ export function getFreightLane(country: string): FreightLane {
 
 export type ContainerSize = '20' | '40'
 
-/** 20ft Dry → '20', 40ft Dry / 40ft HQ → '40' (HQ is usually quoted like a 40ft). */
+/** 20ft Dry → '20', 40ft Dry / 40ft HQ → '40' (port charges and DAP presets treat HQ like a 40ft). */
 export function containerSize(id: ContainerId): ContainerSize {
   return id === '20dc' ? '20' : '40'
 }
@@ -218,7 +220,7 @@ export interface FreightBasis {
 export function baseFreightUsd(lane: FreightRates, basis: FreightBasis): RatedAmount {
   switch (basis.mode) {
     case 'fcl': {
-      const rate = containerSize(basis.container) === '20' ? lane.fcl20 : lane.fcl40
+      const rate = basis.container === '20dc' ? lane.fcl20 : basis.container === '40hc' ? lane.fcl40hc : lane.fcl40
       return { rate, quantity: basis.units, unit: 'container', base: 0, minimum: false, amount: rate * basis.units }
     }
     case 'lcl':

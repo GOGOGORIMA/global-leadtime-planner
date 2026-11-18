@@ -147,7 +147,7 @@ export function AppHeader({ query, onLoadQuery, onReset }: AppHeaderProps) {
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-base font-bold tracking-tight text-slate-900 sm:text-lg">Global Lead-Time Planner</h1>
+              <h1 className="truncate text-base font-bold tracking-tight text-slate-900 sm:text-lg">Global Planner</h1>
               <span className="hidden rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-200 sm:inline">
                 B2B
               </span>

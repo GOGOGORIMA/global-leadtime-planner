@@ -20,9 +20,20 @@ export const DEFAULT_BASE_COUNTRY = 'JP'
 
 /**
  * Partner countries pre-selected on first visit, in this order (also offered as one-click presets):
- * Korea, Taiwan, China, United States, Thailand, Malaysia, India, Vietnam, Singapore.
+ * Korea, China, United States, United Kingdom, Germany, India. Every other catalog country (Taiwan,
+ * Thailand, Malaysia, Vietnam, Singapore …) can still be added from the search box.
  */
-export const PRESET_PARTNER_COUNTRIES = ['KR', 'TW', 'CN', 'US', 'TH', 'MY', 'IN', 'VN', 'SG'] as const
+export const PRESET_PARTNER_COUNTRIES = ['KR', 'CN', 'US', 'GB', 'DE', 'IN'] as const
+
+/**
+ * Holiday region used when none is chosen. UK bank holidays differ by nation and the UK-wide data has
+ * no August bank holiday, so the United Kingdom uses England's bank holidays (England & Wales) by default.
+ */
+const DEFAULT_HOLIDAY_REGIONS: Readonly<Record<string, string>> = { GB: 'ENG' }
+
+export function getDefaultRegion(code: string): string | undefined {
+  return DEFAULT_HOLIDAY_REGIONS[code]
+}
 
 /** Default business hours: 09:00–18:00 local time. */
 export const DEFAULT_WORK_START = 9 * 60
@@ -147,6 +158,11 @@ const NAME_EN_OVERRIDES: Record<string, string> = {
   MO: 'Macao',
 }
 
+/** Japanese names that read better than the CLDR short form (`英国` → `イギリス`). */
+const NAME_JA_OVERRIDES: Record<string, string> = {
+  GB: 'イギリス',
+}
+
 function safeDisplayNames(locale: string, style: 'long' | 'short'): Intl.DisplayNames | null {
   try {
     return new Intl.DisplayNames([locale], { type: 'region', style })
@@ -169,7 +185,7 @@ function getCatalog() {
     let nameJa = code
     try {
       if (!NAME_EN_OVERRIDES[code]) nameEn = en?.of(code) ?? code
-      nameJa = ja?.of(code) ?? nameEn
+      nameJa = NAME_JA_OVERRIDES[code] ?? ja?.of(code) ?? nameEn
     } catch {
       // keep fallbacks
     }
