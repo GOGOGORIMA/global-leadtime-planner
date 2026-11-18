@@ -103,8 +103,9 @@ export function QuoteChart({ result, mode }: { result: QuoteResult; mode: Shippi
 
   const r = result.incoterms
   const currency: QuoteCurrency = result.currency
-  const addOns = r.ddp - r.exw
-  const zoom = scale === 'zoom' && r.exw > 0 && addOns > 0
+  // Everything above the base price (packing included) is drawn to scale in the zoomed view.
+  const addOns = r.ddp - r.base
+  const zoom = scale === 'zoom' && r.base > 0 && addOns > 0
   const toQuote = (jpy: number) => (currency === 'JPY' ? jpy : jpy / result.appliedRate)
   const share = (jpy: number) => (r.ddp > 0 ? `${((jpy / r.ddp) * 100).toFixed(1)}%` : '0%')
 
@@ -285,7 +286,7 @@ export function QuoteChart({ result, mode }: { result: QuoteResult; mode: Shippi
       </div>
 
       <ul className="mt-3 flex flex-wrap gap-x-3 gap-y-1" aria-label="凡例">
-        {COST_SERIES_ORDER.map((series) => (
+        {COST_SERIES_ORDER.filter((series) => series !== 'packing' || r.packing > 0).map((series) => (
           <li key={series} className="flex items-center gap-1.5 text-[11px] text-slate-600">
             <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ background: SERIES_STYLE[series].color }} />
             {seriesLabels(series, mode).name}
@@ -294,7 +295,7 @@ export function QuoteChart({ result, mode }: { result: QuoteResult; mode: Shippi
       </ul>
       <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
         {zoom
-          ? '白い波線のある EXW 部分は高さを省略して表示しています（上乗せコストを拡大）。比率どおりに見るには「実寸」を選択してください。'
+          ? '白い波線のある基準価格の部分は高さを省略して表示しています（梱包費から上の上乗せコストを拡大）。比率どおりに見るには「実寸」を選択してください。'
           : '0 円を起点に比率どおりの高さで表示しています。'}
         各列にカーソルを合わせると内訳を表示します（下の積算内訳表にも同じ数値があります）。
       </p>

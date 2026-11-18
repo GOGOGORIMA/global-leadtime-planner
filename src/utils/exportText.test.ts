@@ -254,8 +254,16 @@ describe('Packing & Container Summary', () => {
 describe('Incoterms Price Quotation', () => {
   const cargo = instantiateCargo(SAMPLE_CARGO)
   const cushioning = createDefaultState('2026-11-18').cushioning
+  // The loading simulator's sample shipment without export packing (FCL 20ft to Thailand).
   const quotation = (patch: Partial<typeof DEFAULT_QUOTE> = {}, destination = 'TH', destinationName = 'Thailand'): QuotationText => ({
-    quote: buildQuotation({ ...DEFAULT_QUOTE, ...patch }, cargo, '20dc', cushioning, destination, '2026-11-18'),
+    quote: buildQuotation(
+      { ...DEFAULT_QUOTE, cargoMode: 'vanning', packingCost: false, ...patch },
+      cargo,
+      '20dc',
+      cushioning,
+      destination,
+      '2026-11-18',
+    ),
     destinationName,
   })
 
@@ -275,7 +283,8 @@ describe('Incoterms Price Quotation', () => {
     )
     expect(text).not.toContain('DAP')
     expect(text).toContain('- Transport: Sea freight (FCL), 1 × 20ft Dry container, Japan → Thailand')
-    expect(text).toContain('- Cargo: 31 packages, 15.5 m³ (net volume), 3,160 kg (gross weight)')
+    expect(text).toContain('- Estimated Volume: 15.5 CBM / Gross Weight: 3,160 kg (31 packages)')
+    expect(text).not.toContain('Export packing')
     expect(text).toContain('- Exchange rate basis: USD 1 = JPY 145.50')
     expect(text).toContain('- DDP includes import duty estimated at 5% of the CIF value')
     expect(text).toContain('VALIDITY\nThis quotation is valid until Wed, 2 Dec 2026.')
@@ -291,9 +300,9 @@ describe('Incoterms Price Quotation', () => {
   })
 
   it('describes LCL, air and JPY quotations and warns in volatile markets', () => {
-    const lcl = renderQuotationEmail(options(), quotation({ mode: 'lcl', market: 'peak', volume: 2.5 }))
+    const lcl = renderQuotationEmail(options(), quotation({ cargoMode: 'direct', volume: 2.5, weight: 3160, mode: 'lcl', market: 'peak' }))
     expect(lcl).toContain('- Transport: Sea freight (LCL), 3.16 R/T (W/M), Japan → Thailand')
-    expect(lcl).toContain('- Cargo: 2.50 m³ (net volume), 3,160 kg (gross weight)') // overridden volume: no package count
+    expect(lcl).toContain('- Estimated Volume: 2.5 CBM / Gross Weight: 3,160 kg\n') // direct entry: no package count
     expect(lcl).toContain('FREIGHT DISCLAIMER\nFreight rates are currently at peak-season levels')
     const air = renderQuotationEmail(options(), quotation({ mode: 'air', market: 'surge' }, 'DE', 'Germany'))
     expect(air).toContain('- FOB Japanese airport (Free On Board)')
@@ -305,6 +314,12 @@ describe('Incoterms Price Quotation', () => {
     expect(yen).toContain('- EXW Japan (Ex Works): JPY 5,000,000')
     expect(yen).toContain('- CIF main port, Cambodia')
     expect(yen).not.toContain('Exchange rate basis')
+    // Size calculator with export packing: LCL by R/T and the packing note.
+    const packed = renderQuotationEmail(options(), quotation({ cargoMode: 'simple', packingCost: true }, 'KR', 'South Korea'))
+    expect(packed).toContain('- Transport: Sea freight (LCL), 7.26 R/T (W/M), Japan → South Korea')
+    expect(packed).toContain('- Estimated Volume: 7.3 CBM / Gross Weight: 1,800 kg (6 packages)')
+    expect(packed).toContain('- Export packing (crates / pallets) is included in the EXW price')
+    expect(packed).toContain('- EXW Japan (Ex Works): USD 35,112.71')
   })
 
   it('inserts the quotation into the standard e-mail and WhatsApp only when requested', () => {
@@ -312,13 +327,14 @@ describe('Incoterms Price Quotation', () => {
     expect(renderEmail(report, options(), undefined, null, quotation())).not.toContain('INCOTERMS PRICE QUOTATION')
     const email = renderEmail(report, options({ includeQuote: true }), undefined, null, quotation())
     const section = email.slice(email.indexOf('INCOTERMS PRICE QUOTATION'), email.indexOf('Please note that'))
-    expect(section.trim().split('\n').slice(0, 7)).toEqual([
+    expect(section.trim().split('\n').slice(0, 8)).toEqual([
       'INCOTERMS PRICE QUOTATION (USD, Incoterms® 2020)',
       '- EXW Japan: USD 34,364.26',
       '- FOB Japanese port: USD 35,426.80',
       '- CIF Laem Chabang, Thailand: USD 35,902.69',
       '- DDP your premises, Thailand: USD 38,110.20',
-      '- Basis: Sea freight (FCL), 1 × 20ft Dry container; 15.5 m³ (net) / 3,160 kg (gross); USD 1 = JPY 145.50',
+      '- Estimated Volume: 15.5 CBM / Gross Weight: 3,160 kg (31 packages)',
+      '- Basis: Sea freight (FCL), 1 × 20ft Dry container; USD 1 = JPY 145.50',
       '- DDP includes import duty estimated at 5% of the CIF value',
     ])
     expect(section).toContain('- Valid until: Wed, 2 Dec 2026')
@@ -331,7 +347,8 @@ describe('Incoterms Price Quotation', () => {
         'FOB Japanese port: *USD 35,426.80*',
         'CIF Laem Chabang, Thailand: *USD 35,902.69*',
         'DDP your premises, Thailand: *USD 38,110.20*',
-        '🚢 FCL 1 × 20ft Dry · 15.5 m³ · 3,160 kg',
+        '📐 Estimated Volume: 15.5 CBM / Gross Weight: 3,160 kg',
+        '🚢 FCL 1 × 20ft Dry',
         '⏳ Valid until 2 Dec 2026 – freight subject to change',
       ].join('\n'),
     )

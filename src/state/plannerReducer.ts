@@ -16,7 +16,8 @@ import {
   type UnitCount,
 } from '../types'
 import { isISODate, normalizeStepDays, type ISODate, type ScheduleMode } from '../utils/dateCalc'
-import { FREIGHT_ORIGIN, isFreightMarket, isShippingMode } from '../utils/freightRates'
+import { FREIGHT_ORIGIN, isFreightMarket, isQuoteMode } from '../utils/freightRates'
+import { isPackingAllowance, type SizeRow, type SizeUnit } from '../utils/incotermsCalc'
 import { isValidTimeZone } from '../utils/timezone'
 import {
   DEFAULT_CUSHIONING,
@@ -35,11 +36,14 @@ import {
   MAX_QUOTE_CHARGE,
   MAX_QUOTE_PRICE,
   MAX_QUOTE_UNITS,
+  MAX_PACKING_RATE,
+  MAX_QUOTE_ROWS,
   MAX_QUOTE_VOLUME,
   MAX_QUOTE_WEIGHT,
   MAX_STACK_CUSHION,
   MAX_STEPS,
   createId,
+  defaultQuoteRows,
   newCargoDefinition,
   nextCargoColor,
   type CargoDefinition,
@@ -149,6 +153,34 @@ function sanitizeUnits(value: Partial<UnitCount> | null | undefined, category: C
   return { id: value.id, units: clampInt(value.units, 1, MAX_QUOTE_UNITS, 1) }
 }
 
+/** Size calculator row: sizes 0.1–2,000 cm (1 decimal) or 1–20,000 mm, 1–999 pieces, 0–100,000 kg per piece. */
+function sanitizeSizeRow(row: Partial<SizeRow> | undefined, unit: SizeUnit, fallback: SizeRow): SizeRow {
+  const max = unit === 'cm' ? MAX_CARGO_DIMENSION / 10 : MAX_CARGO_DIMENSION
+  const min = unit === 'cm' ? 0.1 : 1
+  const decimals = unit === 'cm' ? 1 : 0
+  return {
+    length: clampNumber(row?.length, min, max, decimals, fallback.length),
+    width: clampNumber(row?.width, min, max, decimals, fallback.width),
+    height: clampNumber(row?.height, min, max, decimals, fallback.height),
+    quantity: clampInt(row?.quantity, 1, MAX_CARGO_QUANTITY, fallback.quantity),
+    weight: clampNumber(row?.weight, 0, MAX_CARGO_WEIGHT, 1, fallback.weight),
+  }
+}
+
+function sanitizeSizeRows(rows: unknown, unit: SizeUnit): SizeRow[] {
+  const defaults = defaultQuoteRows(unit)
+  if (!Array.isArray(rows) || rows.length === 0) return defaults
+  return rows.slice(0, MAX_QUOTE_ROWS).map((row) => sanitizeSizeRow(row as Partial<SizeRow>, unit, defaults[0]))
+}
+
+/** Rows converted to another size unit (the volume stays the same). */
+function convertSizeRows(rows: readonly SizeRow[], from: SizeUnit, to: SizeUnit): SizeRow[] {
+  if (from === to) return [...rows]
+  const factor = to === 'mm' ? 10 : 0.1
+  const size = (n: number) => Math.round(n * factor * 10) / 10
+  return rows.map((row) => ({ ...row, length: size(row.length), width: size(row.width), height: size(row.height) }))
+}
+
 /**
  * Makes the quotation settings safe: amounts 0–1,000 億円 / 10 億円, rates > 0, FX buffer 0–10 %,
  * freight contingency 0–30 %, insurance 0–5 %, duty 0–30 %, known destination (never the origin).
@@ -162,7 +194,16 @@ export function sanitizeQuote(input: Partial<QuoteSettings> | undefined, fallbac
     typeof q.destination === 'string' && q.destination !== FREIGHT_ORIGIN && isKnownCountry(q.destination)
       ? q.destination
       : ''
+  const sizeUnit: SizeUnit = q.sizeUnit === 'mm' || q.sizeUnit === 'cm' ? q.sizeUnit : fallback.sizeUnit
   return {
+    cargoMode: q.cargoMode === 'simple' || q.cargoMode === 'direct' || q.cargoMode === 'vanning' ? q.cargoMode : fallback.cargoMode,
+    sizeUnit,
+    items: sanitizeSizeRows(q.items, sizeUnit),
+    allowance: isPackingAllowance(q.allowance) ? q.allowance : fallback.allowance,
+    volume: clampNumber(q.volume, 0, MAX_QUOTE_VOLUME, 3, fallback.volume),
+    weight: clampNumber(q.weight, 0, MAX_QUOTE_WEIGHT, 1, fallback.weight),
+    packingCost: typeof q.packingCost === 'boolean' ? q.packingCost : fallback.packingCost,
+    packingRate: clampNumber(q.packingRate, 0, MAX_PACKING_RATE, 0, fallback.packingRate),
     exw: clampNumber(q.exw, 0, MAX_QUOTE_PRICE, 0, fallback.exw),
     currency,
     fxRate: currency === 'JPY' ? 1 : sanitizeRate(q.fxRate, defaultRate),
@@ -170,7 +211,7 @@ export function sanitizeQuote(input: Partial<QuoteSettings> | undefined, fallbac
     usdRate: sanitizeRate(q.usdRate, DEFAULT_USD_RATE),
     domestic: optionalNumber(q.domestic, MAX_QUOTE_CHARGE, 0),
     exportCharges: optionalNumber(q.exportCharges, MAX_QUOTE_CHARGE, 0),
-    mode: isShippingMode(q.mode) ? q.mode : fallback.mode,
+    mode: isQuoteMode(q.mode) ? q.mode : fallback.mode,
     destination,
     market: isFreightMarket(q.market) ? q.market : fallback.market,
     freight: sanitizeMoney(q.freight),
@@ -179,8 +220,6 @@ export function sanitizeQuote(input: Partial<QuoteSettings> | undefined, fallbac
     local: sanitizeMoney(q.local),
     dutyRate: clampNumber(q.dutyRate, 0, MAX_DUTY_RATE, 2, fallback.dutyRate),
     validUntil: isISODate(q.validUntil) ? q.validUntil : null,
-    volume: optionalNumber(q.volume, MAX_QUOTE_VOLUME, 3),
-    weight: optionalNumber(q.weight, MAX_QUOTE_WEIGHT, 1),
     container: sanitizeUnits(q.container, 'sea'),
     truck: sanitizeUnits(q.truck, 'truck'),
   }
@@ -486,6 +525,10 @@ export function plannerReducer(state: PlannerState, action: PlannerAction): Plan
       }
     case 'setQuote': {
       const merged = { ...state.quote, ...action.patch }
+      // Switching cm ⇄ mm converts the rows so the volume stays the same.
+      if (action.patch.sizeUnit && action.patch.sizeUnit !== state.quote.sizeUnit && action.patch.items === undefined) {
+        merged.items = convertSizeRows(state.quote.items, state.quote.sizeUnit, action.patch.sizeUnit)
+      }
       // A new quote currency starts from its indicative rate unless a rate comes with it.
       if (action.patch.currency && action.patch.currency !== state.quote.currency && action.patch.fxRate === undefined) {
         merged.fxRate = isQuoteCurrency(action.patch.currency) ? CURRENCY_INFO[action.patch.currency].defaultRate : state.quote.fxRate
@@ -493,7 +536,7 @@ export function plannerReducer(state: PlannerState, action: PlannerAction): Plan
       return { ...state, quote: sanitizeQuote(merged, state.quote) }
     }
     case 'resetQuote':
-      return { ...state, quote: { ...DEFAULT_QUOTE } }
+      return { ...state, quote: { ...DEFAULT_QUOTE, items: defaultQuoteRows(DEFAULT_QUOTE.sizeUnit) } }
     case 'replace':
       return action.state
     default:

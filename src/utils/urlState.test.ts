@@ -73,6 +73,17 @@ describe('URL state', () => {
       truck: { gap: 100, wall: 20, stack: true, stackGap: 15 },
     },
     quote: {
+      cargoMode: 'simple',
+      sizeUnit: 'mm',
+      items: [
+        { length: 1200, width: 1000, height: 1100, quantity: 4, weight: 420.5 },
+        { length: 600, width: 400, height: 300, quantity: 12, weight: 18 },
+      ],
+      allowance: 'crate',
+      volume: 12.345,
+      weight: 2500.5,
+      packingCost: false,
+      packingRate: 18000,
       exw: 12_345_678,
       currency: 'EUR',
       fxRate: 171.25,
@@ -89,8 +100,6 @@ describe('URL state', () => {
       local: { amount: 98000, currency: 'JPY' },
       dutyRate: 2.7,
       validUntil: '2026-12-15',
-      volume: 12.345,
-      weight: 2500.5,
       container: { id: '40hc', units: 2 },
       truck: { id: '10t', units: 1 },
     },
@@ -126,8 +135,15 @@ describe('URL state', () => {
     // Only modes that differ from their defaults are written.
     expect(params.getAll('cl')).toEqual(['truck.100.20.15.v'])
     // Quotation board: only settings that differ from the defaults.
-    const quoteParams = Object.fromEntries([...params].filter(([key]) => key.startsWith('q')))
+    const quoteParams = Object.fromEntries([...params].filter(([key]) => key.startsWith('q') && key !== 'qi'))
+    expect(params.getAll('qi')).toEqual(['1200x1000x1100_4_420.5', '600x400x300_12_18'])
     expect(quoteParams).toEqual({
+      qsu: 'mm',
+      qal: 'crate',
+      qv: '12.345',
+      qw: '2500.5',
+      qpc: '0',
+      qpr: '18000',
       qx: '12345678',
       qcur: 'EUR',
       qfx: '171.25',
@@ -143,8 +159,6 @@ describe('URL state', () => {
       qloc: '98000JPY',
       qduty: '2.7',
       qval: '2026-12-15',
-      qv: '12.345',
-      qw: '2500.5',
       qct: '40hc.2',
       qtr: '10t.1',
     })
@@ -154,7 +168,8 @@ describe('URL state', () => {
     expect([...new URLSearchParams(serializeState(fallback)).keys()].filter((k) => k.startsWith('q'))).toEqual([])
     const q = parseState(
       '?qx=-5&qcur=xyz&qfx=0&qfb=25&qusd=abc&qdom=1e12&qexp=-1&qm=ship&qdst=JP&qmk=crazy&qfr=12EUR' +
-        '&qcb=55&qins=9&qloc=-5USD&qduty=45&qval=2026-02-30&qv=-3&qw=nope&qct=2t.3&qtr=40hc.1',
+        '&qcb=55&qins=9&qloc=-5USD&qduty=45&qval=2026-02-30&qv=-3&qw=nope&qct=2t.3&qtr=40hc.1' +
+        '&qcm=bogus&qsu=inch&qi=0x99999x5_0_200000&qi=bad&qal=foam&qpc=maybe&qpr=-10',
       fallback,
     ).state.quote
     expect(q).toEqual({
@@ -167,7 +182,13 @@ describe('URL state', () => {
       insuranceRate: 5,
       dutyRate: 30,
       volume: 0,
+      // Rows are clamped (cm: 0.1–2,000, 1–999 pieces, ≤ 100,000 kg); malformed rows are dropped.
+      items: [{ length: 0.1, width: 2000, height: 5, quantity: 1, weight: 100000 }],
+      packingRate: 0,
     })
+    // No rows → the default row in the chosen unit; the direct-entry defaults when absent.
+    expect(parseState('?qsu=mm', fallback).state.quote.items).toEqual([{ length: 1100, width: 1100, height: 1000, quantity: 6, weight: 300 }])
+    expect(parseState('?qcm=direct', fallback).state.quote).toMatchObject({ cargoMode: 'direct', volume: 8.5, weight: 2400, mode: 'auto' })
     // A new currency starts from its indicative rate; JPY quotes always use 1.
     expect(parseState('?qcur=EUR', fallback).state.quote).toMatchObject({ currency: 'EUR', fxRate: 172 })
     expect(parseState('?qcur=jpy&qfx=150', fallback).state.quote).toMatchObject({ currency: 'JPY', fxRate: 1 })
@@ -277,6 +298,14 @@ describe('plannerReducer', () => {
     next = plannerReducer(next, { type: 'setQuote', patch: { freight: null, container: { id: '4t', units: 2 } } })
     expect(next.quote.freight).toBeNull()
     expect(next.quote.container).toBeNull() // trucks are not FCL containers
+    // cm ⇄ mm converts the size calculator rows (the volume stays the same).
+    next = plannerReducer(next, { type: 'setQuote', patch: { sizeUnit: 'mm' } })
+    expect(next.quote.items).toEqual([{ length: 1100, width: 1100, height: 1000, quantity: 6, weight: 300 }])
+    next = plannerReducer(next, { type: 'setQuote', patch: { sizeUnit: 'cm', allowance: 'carton', mode: 'air', packingCost: false } })
+    expect(next.quote).toMatchObject({ sizeUnit: 'cm', allowance: 'carton', mode: 'air', packingCost: false })
+    expect(next.quote.items[0]).toMatchObject({ length: 110, width: 110, height: 100 })
+    next = plannerReducer(next, { type: 'setQuote', patch: { items: [] } })
+    expect(next.quote.items).toHaveLength(1) // at least one row
     expect(plannerReducer(next, { type: 'resetQuote' }).quote).toEqual(fallback.quote)
   })
 
