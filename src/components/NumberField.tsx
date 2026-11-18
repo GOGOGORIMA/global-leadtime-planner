@@ -17,6 +17,7 @@ export function NumberField({
   disabled,
   id,
   className,
+  compact = false,
 }: {
   /** Small caption above the input (omit for inline use). */
   label?: string
@@ -31,6 +32,8 @@ export function NumberField({
   disabled?: boolean
   id?: string
   className?: string
+  /** Denser input for table rows. */
+  compact?: boolean
 }) {
   const [draft, setDraft] = useState(String(value))
   const [synced, setSynced] = useState(value)
@@ -55,13 +58,25 @@ export function NumberField({
         if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n)
       }}
       onBlur={() => setDraft(String(value))}
-      className={cx(inputClass, 'no-spinner px-2 py-1.5 text-right tabular-nums', suffix && 'pr-9')}
+      className={cx(
+        inputClass,
+        'no-spinner text-right tabular-nums',
+        compact ? 'px-1.5 py-1.5 text-[13px]' : 'px-2 py-1.5',
+        suffix && (compact ? 'pr-7' : 'pr-9'),
+      )}
     />
   )
   const field = suffix ? (
     <span className="relative block">
       {input}
-      <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[11px] text-slate-400">{suffix}</span>
+      <span
+        className={cx(
+          'pointer-events-none absolute top-1/2 -translate-y-1/2 text-slate-400',
+          compact ? 'right-1.5 text-[10px]' : 'right-2.5 text-[11px]',
+        )}
+      >
+        {suffix}
+      </span>
     </span>
   ) : (
     input
