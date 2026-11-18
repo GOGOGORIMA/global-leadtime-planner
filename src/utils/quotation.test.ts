@@ -56,10 +56,14 @@ describe('freight rate tables', () => {
       expect(lane.port, code).toBeTruthy()
       expect(freightRegion(code), code).toBe(lane.region)
       expect(lane.fcl40, code).toBeGreaterThan(lane.fcl20)
+      expect(lane.fcl40hc, code).toBeGreaterThan(lane.fcl40)
       expect(lane.lcl, code).toBeGreaterThan(0)
       expect(lane.air, code).toBeGreaterThan(0)
     }
-    expect(getFreightLane('TH')).toMatchObject({ port: 'Laem Chabang', fcl20: 350, fcl40: 650, estimated: false })
+    expect(getFreightLane('TH')).toMatchObject({ port: 'Laem Chabang', fcl20: 350, fcl40: 650, fcl40hc: 700, estimated: false })
+    // European lanes of the presets: Felixstowe / Southampton and Hamburg.
+    expect(getFreightLane('GB')).toMatchObject({ port: 'Felixstowe / Southampton', region: 'europe', fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 4.8 })
+    expect(getFreightLane('DE')).toMatchObject({ port: 'Hamburg', region: 'europe', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 })
     // Cambodia has no dedicated lane → Southeast Asia estimate (dearer than Thailand).
     const kh = getFreightLane('KH')
     expect(kh).toMatchObject({ region: 'southeastAsia', estimated: true })
@@ -72,7 +76,8 @@ describe('freight rate tables', () => {
   it('multiplies by the market level and rates each mode by its own unit', () => {
     expect(MARKET_FACTORS).toEqual({ normal: 1, peak: 1.5, surge: 2.5 })
     const th = getFreightLane('TH')
-    expect(baseFreightUsd(th, basis({ container: '40hc', units: 2 }))).toMatchObject({ rate: 650, quantity: 2, amount: 1300 })
+    expect(baseFreightUsd(th, basis({ container: '40dc', units: 2 }))).toMatchObject({ rate: 650, quantity: 2, amount: 1300 })
+    expect(baseFreightUsd(th, basis({ container: '40hc', units: 2 }))).toMatchObject({ rate: 700, quantity: 2, amount: 1400 })
     expect(baseFreightUsd(th, basis({ mode: 'lcl', revenueTons: 4.5 })).amount).toBeCloseTo(135)
     expect(baseFreightUsd(th, basis({ mode: 'air', chargeableKg: 500 })).amount).toBeCloseTo(1400)
     // Air minimum charge for small shipments.
@@ -228,7 +233,7 @@ describe('quotation', () => {
     expect(air.freight.amount).toBe(Math.round(2.8 * 3160 * 2.5 * 150))
     const fcl = computeQuote(quote({ container: { id: '40hc', units: 2 }, truck: { id: '10t', units: 2 } }), link, 'TH', TODAY)
     expect(fcl.container).toMatchObject({ units: 2, source: 'manual' })
-    expect(fcl.freight.amount).toBe(650 * 2 * 150)
+    expect(fcl.freight.amount).toBe(700 * 2 * 150) // 40ft HQ rate
     expect(fcl.domestic.amount).toBe(190_000)
     // Overrides are used as entered: no market factor on a forwarder's actual quote.
     const usd = computeQuote(quote({ market: 'peak', freight: { amount: 500, currency: 'USD' } }), link, 'TH', TODAY)

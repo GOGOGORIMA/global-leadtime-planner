@@ -9,9 +9,10 @@ import {
   getTimeZoneOptions,
 } from '../data/countries'
 import { getFlagUrl } from '../data/flags'
-import { buildCountryCalendar, resolveCountry } from './calendars'
+import { buildCountryCalendar, resolveCountry, toParticipant } from './calendars'
 import { getDayStatus } from './dateCalc'
 import { getHolidayRegions, getHolidaysInRange, getHolidaysOn, getLocalHolidayLanguage, isBlockingHoliday } from './holidays'
+import { findCommonIntervals, getDayWindow, getTimeZoneAbbreviation, totalMinutes } from './timezone'
 
 describe('holidays (date-holidays wrapper)', () => {
   it('returns English and local names for Japanese public holidays', () => {
@@ -67,18 +68,25 @@ describe('country catalog', () => {
     const catalog = getCountryCatalog()
     expect(catalog.length).toBeGreaterThan(200)
     expect(DEFAULT_BASE_COUNTRY).toBe('JP')
-    expect([...PRESET_PARTNER_COUNTRIES]).toEqual(['KR', 'TW', 'CN', 'US', 'TH', 'MY', 'IN', 'VN', 'SG'])
+    expect([...PRESET_PARTNER_COUNTRIES]).toEqual(['KR', 'CN', 'US', 'GB', 'DE', 'IN'])
     expect(PRESET_PARTNER_COUNTRIES.map((code) => getCountryInfo(code).nameJa)).toEqual([
       '韓国',
-      '台湾',
       '中国',
       'アメリカ',
-      'タイ',
-      'マレーシア',
+      'イギリス',
+      'ドイツ',
       'インド',
-      'ベトナム',
-      'シンガポール',
     ])
+    expect(PRESET_PARTNER_COUNTRIES.map((code) => getDefaultTimeZone(code))).toEqual([
+      'Asia/Seoul',
+      'Asia/Shanghai',
+      'America/New_York',
+      'Europe/London',
+      'Europe/Berlin',
+      'Asia/Kolkata',
+    ])
+    // The former presets stay in the catalog (addable from the search box).
+    for (const code of ['TW', 'TH', 'MY', 'VN', 'SG']) expect(catalog.some((c) => c.code === code)).toBe(true)
     for (const code of [DEFAULT_BASE_COUNTRY, ...PRESET_PARTNER_COUNTRIES]) {
       const info = getCountryInfo(code)
       expect(info.hasHolidayData).toBe(true)
@@ -215,5 +223,52 @@ describe('Taiwan and India', () => {
     expect(isBlockingHoliday('IN', undefined, '2026-08-15')).toBe(true) // Independence Day
     expect(isBlockingHoliday('IN', undefined, '2026-10-02')).toBe(true) // Gandhi Jayanti
     expect(isBlockingHoliday('IN', undefined, '2026-10-05')).toBe(false)
+  })
+})
+
+describe('United Kingdom and Germany', () => {
+  it('shows the United Kingdom as イギリス and uses the Bank Holidays of England by default', () => {
+    expect(getCountryInfo('GB')).toMatchObject({ nameJa: 'イギリス', nameEn: 'United Kingdom' })
+    const gb = resolveCountry('GB', undefined)
+    expect(gb).toMatchObject({ timeZone: 'Europe/London', region: 'ENG', regionName: 'England', weekend: [0, 6] })
+    const calendar = buildCountryCalendar(gb, undefined)
+    expect(getDayStatus('2026-04-06', calendar)).toBe('holiday') // Easter Monday
+    expect(getDayStatus('2026-08-31', calendar)).toBe('holiday') // Summer bank holiday (England & Wales)
+    expect(getDayStatus('2026-12-28', calendar)).toBe('holiday') // Boxing Day (substitute day)
+    expect(getDayStatus('2026-08-03', calendar)).toBe('working')
+    // Another nation can still be chosen: Scotland's summer bank holiday is the first Monday of August.
+    const scotland = buildCountryCalendar(resolveCountry('GB', { region: 'SCT' }), undefined)
+    expect(getDayStatus('2026-08-03', scotland)).toBe('holiday')
+    expect(getDayStatus('2026-08-31', scotland)).toBe('working')
+  })
+
+  it('blocks German national holidays but not the half-day Christmas Eve', () => {
+    const de = resolveCountry('DE', undefined)
+    expect(de).toMatchObject({ timeZone: 'Europe/Berlin', region: undefined })
+    const calendar = buildCountryCalendar(de, undefined)
+    for (const date of ['2026-04-03', '2026-04-06', '2026-05-01', '2026-05-14', '2026-05-25', '2026-12-25']) {
+      expect(getDayStatus(date, calendar), date).toBe('holiday')
+    }
+    expect(getDayStatus('2026-12-24', calendar)).toBe('working')
+  })
+
+  it('labels the preset time zones with their DST abbreviations and overlaps with Japan', () => {
+    const jan = Date.UTC(2026, 0, 14, 12)
+    const jul = Date.UTC(2026, 6, 15, 12)
+    const labels = (tz: string) => [getTimeZoneAbbreviation(tz, jan), getTimeZoneAbbreviation(tz, jul)]
+    expect(labels('Europe/London')).toEqual(['GMT', 'BST'])
+    expect(labels('Europe/Berlin')).toEqual(['CET', 'CEST'])
+    expect(labels('America/New_York')).toEqual(['EST', 'EDT'])
+    expect(labels('Asia/Kolkata')).toEqual(['IST', 'IST'])
+    const jp = resolveCountry('JP', undefined, true)
+    const overlap = (code: string, date: string) => {
+      const partner = resolveCountry(code, undefined)
+      const participants = [jp, partner].map((c) => toParticipant(c, buildCountryCalendar(c, undefined)))
+      return totalMinutes(findCommonIntervals(getDayWindow(date, jp.timeZone), participants))
+    }
+    // 09:00–18:00 each: London overlaps only under BST, Berlin 1 h (CET) / 2 h (CEST), India 5.5 h.
+    expect([overlap('GB', '2026-01-14'), overlap('GB', '2026-07-15')]).toEqual([0, 60])
+    expect([overlap('DE', '2026-01-14'), overlap('DE', '2026-07-15')]).toEqual([60, 120])
+    expect(overlap('IN', '2026-01-14')).toBe(330)
   })
 })

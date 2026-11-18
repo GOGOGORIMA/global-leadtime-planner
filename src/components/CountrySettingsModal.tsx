@@ -3,8 +3,10 @@ import { useMemo } from 'react'
 import {
   DEFAULT_WORK_END,
   DEFAULT_WORK_START,
+  getDefaultRegion,
   getDefaultTimeZone,
   getDefaultWeekend,
+  getRegionName,
   getRegionOptions,
   getTimeZoneOptions,
 } from '../data/countries'
@@ -42,6 +44,7 @@ export function CountrySettingsModal({ country, settings, now, onChange, onReset
   const defaultWeekend = getDefaultWeekend(country.code, country.region)
   const hasCustom = !!settings && Object.keys(settings).length > 0
   const correction = getHolidayCorrection(country.code)
+  const defaultRegion = getDefaultRegion(country.code)
 
   const toggleWeekday = (day: number) => {
     const next = country.weekend.includes(day) ? country.weekend.filter((d) => d !== day) : [...country.weekend, day]
@@ -109,15 +112,22 @@ export function CountrySettingsModal({ country, settings, now, onChange, onReset
               id="region-select"
               className={inputClass}
               value={country.region ?? ''}
-              onChange={(e) => onChange({ region: e.target.value || undefined })}
+              // The default region (e.g. England for the United Kingdom) is stored as "no setting".
+              onChange={(e) => onChange({ region: e.target.value && e.target.value !== defaultRegion ? e.target.value : undefined })}
             >
-              <option value="">全国（国の祝日のみ）</option>
+              {!defaultRegion && <option value="">全国（国の祝日のみ）</option>}
               {regions.map((r) => (
                 <option key={r.code} value={r.code}>
                   {r.name}
+                  {r.code === defaultRegion ? '（既定）' : ''}
                 </option>
               ))}
             </select>
+            {defaultRegion && (
+              <p className="mt-1 text-xs text-slate-500">
+                祝日（Bank Holidays）が地域ごとに異なるため、既定では{getRegionName(country.code, defaultRegion)}の祝日を使います。
+              </p>
+            )}
           </div>
         )}
 

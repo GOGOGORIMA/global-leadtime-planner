@@ -370,7 +370,7 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
         text: `${item.name}  ${mm(item.length)}×${mm(item.width)}×${mm(item.height)} mm ・ ${kg(item.weight)} kg × ${item.quantity}（積載 ${result.items[i]?.loaded ?? 0}/${item.quantity}）${item.stackable ? '' : ' ・ 上積み厳禁'}${item.margin > 0 ? ` ・ 個別緩衝材 +${mm(item.margin)} mm` : ''}`,
       })),
       warnings: alerts.filter((a) => a.tone !== 'ok').map((a) => a.text),
-      footer: `Global Lead-Time Planner ・ ${today} ・ 奥（前壁）からドアに向かって積み付け（自動計算の目安です。実際の積み付けは現場で確認してください）`,
+      footer: `Global Planner ・ ${today} ・ 奥（前壁）からドアに向かって積み付け（自動計算の目安です。実際の積み付けは現場で確認してください）`,
       fileName: `vanning_${spec.id}_${today}.png`,
     }),
     [spec, result, cargo, alerts, today, clearance],

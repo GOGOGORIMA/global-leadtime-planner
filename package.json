@@ -2,7 +2,7 @@
   "name": "global-leadtime-planner",
   "private": true,
   "version": "1.0.0",
-  "description": "B2B Global Lead-Time Planner: time-zone & local-holiday aware lead-time calculator and meeting planner for international sales / trade operations.",
+  "description": "Global Planner (B2B): time-zone & local-holiday aware lead-time calculator, meeting planner, container loading simulator and Incoterms quotation board for international sales / trade operations.",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -245,15 +245,22 @@ describe('URL state', () => {
     expect(s.overrides).toEqual({ TH: { '2027-01-05': { kind: 'off', label: 'Ok' } } })
   })
 
+  it('starts with Japan and the six preset partner countries', () => {
+    expect(fallback.base).toBe('JP')
+    expect(fallback.partners).toEqual(['KR', 'CN', 'US', 'GB', 'DE', 'IN'])
+    // The local-delivery step of the default template uses the first partner's business days.
+    expect(fallback.steps.map((s) => s.calendar)).toEqual(['JP', CALENDAR_DAYS, 'KR'])
+  })
+
   it('keeps the reducer and URL in sync for typical edits', () => {
-    let next = plannerReducer(fallback, { type: 'removePartner', code: 'TH' })
-    // The step that used Thai business days falls back to the base calendar.
+    let next = plannerReducer(fallback, { type: 'removePartner', code: 'KR' })
+    // The step that used Korean business days falls back to the base calendar.
     expect(next.steps[2].calendar).toBe('JP')
     next = plannerReducer(next, { type: 'toggleOverride', country: 'JP', date: '2026-12-28', defaultWorking: true })
-    next = plannerReducer(next, { type: 'setBase', code: 'KR' })
-    expect(next.base).toBe('KR')
+    next = plannerReducer(next, { type: 'setBase', code: 'DE' })
+    expect(next.base).toBe('DE')
     expect(next.partners[0]).toBe('JP')
-    expect(next.partners).not.toContain('KR')
+    expect(next.partners).not.toContain('DE')
     const parsed = parseState(serializeState(next), fallback)
     expect(withoutIds(parsed.state)).toEqual(withoutIds(next))
   })
