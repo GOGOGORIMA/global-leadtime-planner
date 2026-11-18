@@ -4,8 +4,15 @@
  * This module is loaded lazily with tab ⑤, so the three.js chunk is only downloaded when the
  * loading simulator is opened. Rendering is on demand (camera moves, data changes, resize).
  */
-import { ImageDown, Layers } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type Ref,
+} from 'react'
 import {
   AmbientLight,
   ArrowHelper,
@@ -43,7 +50,6 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { ContainerSpec } from '../data/containers'
 import type { CargoItem } from '../types'
 import type { Clearance, Placement } from '../utils/binPacking'
-import { btn, cx, focusRing } from './classes'
 
 export type CameraView = 'oblique' | 'side' | 'top' | 'door'
 
@@ -58,6 +64,14 @@ export interface SnapshotInfo {
   fileName: string
 }
 
+/** Toolbar actions (the buttons live in the card header of the loading tab). */
+export interface LoadViewerHandle {
+  /** Frames a preset view (also when it is already the selected one). */
+  setView: (view: CameraView) => void
+  /** Downloads the PNG (3D image + title, totals, cargo list, warnings). */
+  save: () => void
+}
+
 interface LoadViewer3DProps {
   spec: ContainerSpec
   placements: readonly Placement[]
@@ -65,14 +79,16 @@ interface LoadViewer3DProps {
   /** Cushioning / clearance used for the plan (draws the occupied boxes and the usable area). */
   clearance: Clearance
   snapshot: SnapshotInfo
+  /** Preset view; re-framed whenever the container / truck changes. */
+  view: CameraView
+  /** Show the occupied boxes incl. cushioning and the usable-area outline. */
+  showCushion: boolean
+  /** The user orbited / panned / zoomed by hand (with the shown container id). */
+  onUserMove?: (specId: string) => void
+  /** The WebGL scene was created (true) or WebGL is unavailable (false). */
+  onReady?: (ready: boolean) => void
+  ref?: Ref<LoadViewerHandle>
 }
-
-const VIEWS: ReadonlyArray<{ id: CameraView; label: string; title: string }> = [
-  { id: 'oblique', label: '斜め俯瞰', title: 'ドア側の斜め上から全体を見る' },
-  { id: 'side', label: '真横 (側面)', title: '側面から積み高さと奥行きを見る' },
-  { id: 'top', label: '真上 (平面)', title: '真上から床面の埋まり具合を見る' },
-  { id: 'door', label: '正面 (ドア側)', title: 'ドア側から荷室の中を見る' },
-]
 
 const FONT = '"Inter", "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif'
 const MM = 1 / 1000
@@ -683,14 +699,24 @@ function downloadCanvas(canvas: HTMLCanvasElement, fileName: string) {
   }, 'image/png')
 }
 
-export default function LoadViewer3D({ spec, placements, items, clearance, snapshot }: LoadViewer3DProps) {
+export default function LoadViewer3D({
+  spec,
+  placements,
+  items,
+  clearance,
+  snapshot,
+  view,
+  showCushion,
+  onUserMove,
+  onReady,
+  ref,
+}: LoadViewer3DProps) {
   const sceneRef = useRef<LoadScene | null>(null)
-  /** Preset applied when the container changes (kept in a ref so the effect does not re-run). */
-  const viewRef = useRef<CameraView>('oblique')
+  /** Latest props for callbacks that must not re-create the scene. */
+  const viewRef = useRef<CameraView>(view)
+  const onUserMoveRef = useRef(onUserMove)
+  const onReadyRef = useRef(onReady)
   const pickFrame = useRef(0)
-  const [view, setView] = useState<CameraView>('oblique')
-  /** Container id for which the user moved the camera by hand (no preset button is active then). */
-  const [movedFor, setMovedFor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hover, setHover] = useState<{
     index: number
@@ -699,6 +725,12 @@ export default function LoadViewer3D({ spec, placements, items, clearance, snaps
     maxLeft: number
     placements: readonly Placement[]
   } | null>(null)
+
+  useEffect(() => {
+    viewRef.current = view
+    onUserMoveRef.current = onUserMove
+    onReadyRef.current = onReady
+  })
 
   // The WebGL scene lives as long as the canvas element (React 19 ref callback with cleanup).
   const canvasRef = useCallback((canvas: HTMLCanvasElement | null) => {
@@ -709,10 +741,12 @@ export default function LoadViewer3D({ spec, placements, items, clearance, snaps
       scene = new LoadScene(canvas, host)
     } catch {
       setError('この環境では 3D 表示（WebGL）を利用できません。積載結果は貨物リストとメーターで確認できます。')
+      onReadyRef.current?.(false)
       return
     }
-    scene.onUserMove = (specId) => setMovedFor(specId)
+    scene.onUserMove = (specId) => onUserMoveRef.current?.(specId)
     sceneRef.current = scene
+    onReadyRef.current?.(true)
     return () => {
       cancelAnimationFrame(pickFrame.current)
       scene.dispose()
@@ -720,7 +754,23 @@ export default function LoadViewer3D({ spec, placements, items, clearance, snaps
     }
   }, [])
 
-  // New container / truck: rebuild the body and re-frame the last chosen preset view.
+  useImperativeHandle(
+    ref,
+    () => ({
+      setView: (next: CameraView) => {
+        viewRef.current = next
+        sceneRef.current?.setView(next)
+      },
+      save: () => {
+        const scene = sceneRef.current
+        if (!scene) return
+        downloadCanvas(scene.captureHighResolution((canvas) => composeSnapshot(canvas, snapshot)), snapshot.fileName)
+      },
+    }),
+    [snapshot],
+  )
+
+  // New container / truck: rebuild the body and re-frame the selected preset view.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
@@ -732,32 +782,13 @@ export default function LoadViewer3D({ spec, placements, items, clearance, snaps
     sceneRef.current?.setCargo(placements, items)
   }, [spec, placements, items])
 
-  // Occupied boxes incl. cushioning (ON/OFF toggle; on by default).
-  const [showCushion, setShowCushion] = useState(true)
-  const hasCushion = placements.some(
-    (p) => p.occupied.length !== p.length || p.occupied.width !== p.width || p.occupied.height !== p.height,
-  )
+  // Occupied boxes incl. cushioning + usable area (toggled from the cushioning bar).
   useEffect(() => {
     sceneRef.current?.setCushion(placements, clearance)
   }, [spec, placements, clearance])
   useEffect(() => {
     sceneRef.current?.setCushionVisible(showCushion)
   }, [showCushion])
-
-  const activeView = movedFor === spec.id ? null : view
-
-  const changeView = (next: CameraView) => {
-    viewRef.current = next
-    setView(next)
-    setMovedFor(null)
-    sceneRef.current?.setView(next)
-  }
-
-  const save = () => {
-    const scene = sceneRef.current
-    if (!scene) return
-    downloadCanvas(scene.captureHighResolution((canvas) => composeSnapshot(canvas, snapshot)), snapshot.fileName)
-  }
 
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.buttons !== 0 || e.pointerType === 'touch') {
@@ -782,96 +813,51 @@ export default function LoadViewer3D({ spec, placements, items, clearance, snaps
   const hoveredItem = hovered ? items[hovered.item] : undefined
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="カメラ視点" className="inline-flex flex-wrap rounded-xl bg-slate-100 p-1">
-          {VIEWS.map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              title={v.title}
-              aria-pressed={activeView === v.id}
-              onClick={() => changeView(v.id)}
-              className={cx(
-                'rounded-lg px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition',
-                focusRing,
-                activeView === v.id ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900',
-              )}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
-        <button
-          type="button"
-          aria-pressed={showCushion}
-          disabled={!hasCushion && clearance.wall === 0}
-          onClick={() => setShowCushion((v) => !v)}
-          title="緩衝材・隙間を含めた占有境界（黄色の半透明ボックスと破線）と、壁面クリアランスの内側（有効積載エリア）を表示"
-          className={cx(
-            'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ring-1 transition ring-inset disabled:cursor-not-allowed disabled:opacity-40',
-            focusRing,
-            showCushion ? 'bg-amber-50 text-amber-800 ring-amber-300' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50',
-          )}
+    <div
+      className="relative h-[420px] w-full overflow-hidden rounded-xl border border-slate-200 bg-linear-to-b from-white to-slate-100"
+      onPointerMove={onPointerMove}
+      onPointerLeave={() => setHover(null)}
+    >
+      <canvas
+        ref={canvasRef}
+        className="block h-full w-full touch-none"
+        role="img"
+        aria-label={`${spec.nameJa} の 3D 積載ビュー（${placements.length} 個）`}
+      />
+      {hovered && hoveredItem && hover && (
+        <div
+          className="pointer-events-none absolute z-10 w-64 rounded-lg border border-slate-200 bg-white/95 p-2.5 text-xs shadow-lg"
+          style={{ left: Math.max(8, Math.min(hover.x + 14, hover.maxLeft)), top: Math.max(8, hover.y - 10) }}
         >
-          <Layers size={14} />
-          緩衝材を表示 {showCushion ? 'ON' : 'OFF'}
-        </button>
-        <button type="button" className={cx(btn.primary, 'ml-auto')} onClick={save} disabled={Boolean(error)}>
-          <ImageDown size={16} />
-          3D画像を保存
-        </button>
-      </div>
-      <div
-        className="relative h-[480px] w-full overflow-hidden rounded-xl border border-slate-200 bg-linear-to-b from-white to-slate-100"
-        onPointerMove={onPointerMove}
-        onPointerLeave={() => setHover(null)}
-      >
-        <canvas
-          ref={canvasRef}
-          className="block h-full w-full touch-none"
-          role="img"
-          aria-label={`${spec.nameJa} の 3D 積載ビュー（${placements.length} 個）`}
-        />
-        {hovered && hoveredItem && hover && (
-          <div
-            className="pointer-events-none absolute z-10 w-64 rounded-lg border border-slate-200 bg-white/95 p-2.5 text-xs shadow-lg"
-            style={{ left: Math.max(8, Math.min(hover.x + 14, hover.maxLeft)), top: Math.max(8, hover.y - 10) }}
-          >
-            <div className="flex items-center gap-1.5 font-semibold text-slate-900">
-              <span className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-slate-900/30" style={{ backgroundColor: hoveredItem.color }} />
-              <span className="truncate">{hoveredItem.name}</span>
-            </div>
-            <div className="mt-1 text-slate-600 tabular-nums">
-              {formatMm(hoveredItem.length)} × {formatMm(hoveredItem.width)} × {formatMm(hoveredItem.height)} mm ・{' '}
-              {hoveredItem.weight.toLocaleString('en-US')} kg
-            </div>
-            <div className="mt-0.5 text-slate-500 tabular-nums">
-              奥から {formatMm(hovered.x)} mm ・ 床から {formatMm(hovered.z)} mm
-              {hovered.rotated ? ' ・ 90°回転' : ''}
-            </div>
-            {(hovered.occupied.length !== hovered.length || hovered.occupied.height !== hovered.height) && (
-              <div className="mt-0.5 text-amber-700 tabular-nums">
-                緩衝材込み {formatMm(hovered.occupied.length)} × {formatMm(hovered.occupied.width)} ×{' '}
-                {formatMm(hovered.occupied.height)} mm
-                {hoveredItem.margin > 0 ? `（個別 +${formatMm(hoveredItem.margin)} mm）` : ''}
-              </div>
-            )}
-            {!hoveredItem.stackable && <div className="mt-0.5 font-medium text-rose-600">上積み厳禁（この上には積まない）</div>}
+          <div className="flex items-center gap-1.5 font-semibold text-slate-900">
+            <span className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-slate-900/30" style={{ backgroundColor: hoveredItem.color }} />
+            <span className="truncate">{hoveredItem.name}</span>
           </div>
-        )}
-        {error && (
-          <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-slate-600">{error}</div>
-        )}
-        {!error && placements.length === 0 && (
-          <div className="pointer-events-none absolute inset-x-0 top-3 text-center text-xs text-slate-500">
-            積載された貨物はありません
+          <div className="mt-1 text-slate-600 tabular-nums">
+            {formatMm(hoveredItem.length)} × {formatMm(hoveredItem.width)} × {formatMm(hoveredItem.height)} mm ・{' '}
+            {hoveredItem.weight.toLocaleString('en-US')} kg
           </div>
-        )}
-        <p className="pointer-events-none absolute bottom-2 left-3 text-[11px] text-slate-500">
-          ドラッグ: 回転 ／ 右ドラッグ: 移動 ／ ホイール: ズーム
-        </p>
-      </div>
+          <div className="mt-0.5 text-slate-500 tabular-nums">
+            奥から {formatMm(hovered.x)} mm ・ 床から {formatMm(hovered.z)} mm
+            {hovered.rotated ? ' ・ 90°回転' : ''}
+          </div>
+          {(hovered.occupied.length !== hovered.length || hovered.occupied.height !== hovered.height) && (
+            <div className="mt-0.5 text-amber-700 tabular-nums">
+              緩衝材込み {formatMm(hovered.occupied.length)} × {formatMm(hovered.occupied.width)} ×{' '}
+              {formatMm(hovered.occupied.height)} mm
+              {hoveredItem.margin > 0 ? `（個別 +${formatMm(hoveredItem.margin)} mm）` : ''}
+            </div>
+          )}
+          {!hoveredItem.stackable && <div className="mt-0.5 font-medium text-rose-600">上積み厳禁（この上には積まない）</div>}
+        </div>
+      )}
+      {error && <div className="absolute inset-0 flex items-center justify-center p-6 text-center text-sm text-slate-600">{error}</div>}
+      {!error && placements.length === 0 && (
+        <div className="pointer-events-none absolute inset-x-0 top-3 text-center text-xs text-slate-500">積載された貨物はありません</div>
+      )}
+      <p className="pointer-events-none absolute bottom-2 left-3 text-[11px] text-slate-500">
+        ドラッグ: 回転 ／ 右ドラッグ: 移動 ／ ホイール: ズーム
+      </p>
     </div>
   )
 }

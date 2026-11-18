@@ -1,5 +1,5 @@
-import { AlertTriangle, ArrowRight, Box, CircleCheck, Container, Info, Package, Ship, Truck } from 'lucide-react'
-import { Component, Suspense, lazy, useMemo, type Dispatch, type ReactNode } from 'react'
+import { AlertTriangle, ArrowRight, CircleCheck, Container, ImageDown, Info, Ship, Truck } from 'lucide-react'
+import { Component, Suspense, lazy, useMemo, useRef, useState, type Dispatch, type ReactNode } from 'react'
 import {
   CATEGORY_LABELS,
   getContainerSpec,
@@ -24,10 +24,10 @@ import {
 } from '../utils/binPacking'
 import type { ISODate } from '../utils/dateCalc'
 import { CargoList } from './CargoList'
-import { cx, focusRing } from './classes'
-import { CushioningPanel } from './CushioningPanel'
-import type { SnapshotInfo } from './LoadViewer3D'
-import { Card, Segmented } from './ui'
+import { btn, cx, focusRing } from './classes'
+import { CushioningBar } from './CushioningBar'
+import type { CameraView, LoadViewerHandle, SnapshotInfo } from './LoadViewer3D'
+import { Segmented } from './ui'
 
 // three.js (~600 kB) is only downloaded when this tab is opened.
 const LoadViewer3D = lazy(() => import('./LoadViewer3D'))
@@ -39,6 +39,13 @@ interface VanningPanelProps {
   dispatch: Dispatch<PlannerAction>
   today: ISODate
 }
+
+const VIEWS: ReadonlyArray<{ id: CameraView; label: string; title: string }> = [
+  { id: 'oblique', label: '斜め俯瞰', title: 'ドア側の斜め上から全体を見る' },
+  { id: 'side', label: '側面', title: '真横から積み高さと奥行きを見る' },
+  { id: 'top', label: '真上', title: '真上から床面の埋まり具合を見る' },
+  { id: 'door', label: '正面（ドア側）', title: 'ドア側から荷室の中を見る' },
+]
 
 const mm = (n: number) => Math.round(n).toLocaleString('en-US')
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 1 })
@@ -72,8 +79,8 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
   render() {
     if (!this.state.failed) return this.props.children
     return (
-      <div className="flex h-[480px] items-center justify-center rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-        3D ビューアを読み込めませんでした（通信エラー、または WebGL 非対応）。積載結果は貨物リストとメーターで確認できます。
+      <div className="flex h-[420px] items-center justify-center rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+        3D ビューアを読み込めませんでした（通信エラー、または WebGL 非対応）。積載結果はメーターと貨物リストで確認できます。
       </div>
     )
   }
@@ -81,7 +88,7 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
 
 function ViewerPlaceholder() {
   return (
-    <div className="flex h-[528px] items-center justify-center rounded-xl border border-slate-200 bg-linear-to-b from-white to-slate-100 text-sm text-slate-500">
+    <div className="flex h-[420px] items-center justify-center rounded-xl border border-slate-200 bg-linear-to-b from-white to-slate-100 text-sm text-slate-500">
       3D ビューアを読み込み中…
     </div>
   )
@@ -100,7 +107,8 @@ function blockedText(plan: UnitPlan): string {
   }
 }
 
-function SuggestionCard({
+/** Compact suggestion badge (card header): 「海上なら 20ft Dry で積載可能（余裕あり）」. */
+function SuggestionBadge({
   suggestion,
   current,
   hasCargo,
@@ -147,31 +155,31 @@ function SuggestionCard({
   return (
     <div
       className={cx(
-        'flex items-start gap-3 rounded-xl border p-3',
+        'flex items-center gap-2.5 rounded-lg border px-2.5 py-2',
         tone === 'ok' && 'border-emerald-200 bg-emerald-50/70',
         tone === 'bad' && 'border-rose-200 bg-rose-50/70',
         tone === 'none' && 'border-slate-200 bg-slate-50',
       )}
+      title={`${CATEGORY_LABELS[suggestion.category]}の自動判定`}
     >
       <span
         className={cx(
-          'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
           tone === 'ok' ? 'bg-emerald-600 text-white' : tone === 'bad' ? 'bg-rose-600 text-white' : 'bg-slate-200 text-slate-500',
         )}
       >
-        <Icon size={20} />
+        <Icon size={17} />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-[11px] font-semibold tracking-wide text-slate-500">{CATEGORY_LABELS[suggestion.category]}の自動判定</div>
         <div
           className={cx(
-            'text-base leading-snug font-bold',
+            'text-sm leading-snug font-bold',
             tone === 'ok' ? 'text-emerald-900' : tone === 'bad' ? 'text-rose-800' : 'text-slate-600',
           )}
         >
           {headline}
         </div>
-        <div className="mt-0.5 text-[11px] leading-relaxed text-slate-600 tabular-nums">{detail}</div>
+        <div className="text-[11px] leading-snug text-slate-600 tabular-nums">{detail}</div>
       </div>
       {best &&
         (best.spec.id === current ? (
@@ -194,75 +202,46 @@ function SuggestionCard({
   )
 }
 
-function Meter({ label, text, ratio, note, color }: { label: string; text: string; ratio: number; note?: string; color: string }) {
+/** Compact progress bar for the viewer card footer. */
+function CompactMeter({
+  label,
+  ratio,
+  value,
+  note,
+  color,
+  striped,
+}: {
+  label: string
+  ratio: number
+  value: string
+  note?: string
+  color: string
+  striped?: boolean
+}) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3">
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-2.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-semibold text-slate-600">{label}</span>
-        <span className="text-lg font-bold text-slate-900 tabular-nums">{pct(ratio)}</span>
+        <span className="truncate text-[11px] font-semibold text-slate-600" title={label}>
+          {label}
+        </span>
+        <span className="text-base font-bold text-slate-900 tabular-nums">{pct(ratio)}</span>
       </div>
-      <div className="mt-0.5 text-xs text-slate-600 tabular-nums">{text}</div>
       <div
-        className="mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100"
+        className="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-100"
         role="progressbar"
         aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(Math.min(1, ratio) * 100)}
       >
-        <div className={cx('h-full rounded-full transition-all', color)} style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+        <div className={cx('h-full rounded-full transition-all', color, striped && 'stripes-dark')} style={{ width: `${Math.min(100, ratio * 100)}%` }} />
       </div>
-      {note && <div className="mt-1 text-[11px] text-slate-500 tabular-nums">{note}</div>}
-    </div>
-  )
-}
-
-/** Volume meter: net cargo (solid) + cushioning / gaps (striped) = gross occupied volume. */
-function VolumeMeter({ result }: { result: PackingResult }) {
-  const { spec } = result
-  const net = Math.min(1, result.volumeRatio)
-  const gross = Math.min(1, result.grossVolumeRatio)
-  const cushion = result.loadedGrossVolume - result.loadedVolume
-  const partial = result.loadedPieces < result.totalPieces
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs font-semibold text-slate-600">容積消化率（m³）</span>
-        <span className="text-lg font-bold text-slate-900 tabular-nums">{pct(result.grossVolumeRatio)}</span>
+      <div className="mt-1 truncate text-[11px] text-slate-600 tabular-nums" title={value}>
+        {value}
       </div>
-      <div className="mt-0.5 text-xs text-slate-600 tabular-nums">
-        現在 {m3(result.loadedGrossVolume)} m³ / {spec.capacity} m³ ({pct(result.grossVolumeRatio)})
-        {cushion > 0.005 && <span className="text-slate-500">（緩衝材・隙間込み）</span>}
-      </div>
-      <div
-        className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100"
-        role="progressbar"
-        aria-label="容積消化率（実質占有）"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(gross * 100)}
-      >
-        <div className="stripes-dark absolute inset-y-0 left-0 rounded-full bg-indigo-300" style={{ width: `${gross * 100}%` }} />
-        <div className="absolute inset-y-0 left-0 rounded-full bg-indigo-500" style={{ width: `${net * 100}%` }} />
-      </div>
-      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] text-slate-600 tabular-nums">
-        <dt className="flex items-center gap-1">
-          <span className="h-2 w-2 rounded-sm bg-indigo-500" />
-          正味（Net Cargo Volume）
-        </dt>
-        <dd className="text-right font-semibold text-slate-800">{m3(result.loadedVolume)} m³</dd>
-        <dt className="flex items-center gap-1">
-          <span className="stripes-dark h-2 w-2 rounded-sm bg-indigo-300" />
-          実質占有（Gross Occupied Volume）
-        </dt>
-        <dd className="text-right font-semibold text-slate-800">
-          {m3(result.loadedGrossVolume)} m³
-          {cushion > 0.005 && <span className="font-normal text-amber-700">（+{m3(cushion)}）</span>}
-        </dd>
-      </dl>
-      {partial && (
-        <div className="mt-1 text-[11px] text-slate-500 tabular-nums">
-          全貨物：正味 {m3(result.totalVolume)} m³ ／ 実質占有 {m3(result.totalGrossVolume)} m³
+      {note && (
+        <div className="truncate text-[10px] text-slate-400 tabular-nums" title={note}>
+          {note}
         </div>
       )}
     </div>
@@ -360,6 +339,20 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
   const alerts = useMemo(() => buildAlerts(result, cargo, sea, truck), [result, cargo, sea, truck])
   const hasCargo = cargo.length > 0
 
+  // 3D viewer: the toolbar lives in this card header and drives the lazy viewer through a ref.
+  const viewerRef = useRef<LoadViewerHandle>(null)
+  const [view, setView] = useState<CameraView>('oblique')
+  /** Container id for which the user moved the camera by hand (no preset button is active then). */
+  const [movedFor, setMovedFor] = useState<string | null>(null)
+  const [viewerReady, setViewerReady] = useState(false)
+  const [showGuide, setShowGuide] = useState(true)
+  const activeView = movedFor === spec.id ? null : view
+  const changeView = (next: CameraView) => {
+    setView(next)
+    setMovedFor(null)
+    viewerRef.current?.setView(next)
+  }
+
   const selectContainer = (id: ContainerId) => dispatch({ type: 'setContainer', container: id })
   const switchCategory = (category: ContainerCategory) => {
     if (category === spec.category) return
@@ -383,16 +376,22 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
     [spec, result, cargo, alerts, today, clearance],
   )
   const showsCushion = hasClearance(clearance) || cargo.some((item) => item.margin > 0)
+  const cushionVolume = result.loadedGrossVolume - result.loadedVolume
 
   return (
     <div className="space-y-4">
-      <Card
-        icon={<Container size={18} />}
-        title="コンテナ・トラック積載 3Dシミュレーター（バンニング計算機）"
-        subtitle="貨物の寸法・重量・個数から、海上コンテナ／トラックへの積み付けを自動計算して 3D で表示します。"
-      >
-        <div className="space-y-4 @container">
-          <div className="flex flex-wrap items-center gap-3">
+      {/* 1. 3D viewer card: mode / size, suggestions, warnings, camera + PNG / canvas / meters */}
+      <section aria-label="3D 積載ビュー" className="w-full rounded-xl border border-slate-200 bg-white shadow-sm @container">
+        <header className="space-y-3 border-b border-slate-100 px-4 pt-3 pb-3.5 sm:px-5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+              <Container size={18} />
+            </span>
+            <h2 className="text-base font-semibold text-slate-900">コンテナ・トラック積載 3Dシミュレーター（バンニング計算機）</h2>
+            <span className="text-xs text-slate-500">貨物の寸法・重量・個数から積み付けを自動計算して 3D で表示します。</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
             <Segmented
               ariaLabel="輸送手段"
               value={spec.category}
@@ -402,7 +401,7 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
                 { value: 'truck', label: '陸路トラック', icon: <Truck size={15} /> },
               ]}
             />
-            <div role="radiogroup" aria-label="コンテナ・トラックの規格" className="flex flex-wrap gap-2">
+            <div role="radiogroup" aria-label="コンテナ・トラックの規格" className="flex flex-wrap gap-1.5">
               {specsOfCategory(spec.category).map((s) => {
                 const active = s.id === spec.id
                 const best = (s.category === 'sea' ? sea : truck).best?.spec.id === s.id && hasCargo
@@ -413,8 +412,9 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
                     role="radio"
                     aria-checked={active}
                     onClick={() => selectContainer(s.id)}
+                    title={`${s.nameJa}：内寸 ${dims(s)}、最大積載 ${kg(s.maxPayload)} kg、容積 ${s.capacity} m³`}
                     className={cx(
-                      'relative rounded-xl border px-3 py-1.5 text-left transition',
+                      'rounded-lg border px-2.5 py-1 text-left transition',
                       focusRing,
                       active ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500' : 'border-slate-200 bg-white hover:bg-slate-50',
                     )}
@@ -427,61 +427,33 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
                         </span>
                       )}
                     </span>
-                    <span className="block text-[11px] text-slate-500 tabular-nums">
+                    <span className="block text-[10px] text-slate-500 tabular-nums">
                       {mm(s.length)}×{mm(s.width)}×{mm(s.height)}
                     </span>
                   </button>
                 )
               })}
             </div>
-          </div>
-          <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-600 tabular-nums">
-            <span className="font-semibold text-slate-800">{spec.nameJa}</span>
-            <span>内寸 {dims(spec)}</span>
-            <span>
-              ドア開口高 {mm(spec.doorHeight)} mm{spec.category === 'truck' && '（ウイング・後部ドアとも荷室高まで）'}
-            </span>
-            <span>最大積載 {kg(spec.maxPayload)} kg</span>
-            <span>容積 {spec.capacity} m³</span>
-          </p>
-
-          <CushioningPanel
-            category={spec.category}
-            spec={spec}
-            settings={cushioning[spec.category]}
-            dispatch={dispatch}
-          />
-
-          <div className="grid gap-3 @3xl:grid-cols-2">
-            <SuggestionCard suggestion={sea} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
-            <SuggestionCard suggestion={truck} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
+            <p className="flex flex-wrap gap-x-2.5 text-[11px] text-slate-500 tabular-nums">
+              <span>ドア開口高 {mm(spec.doorHeight)} mm{spec.category === 'truck' ? '（荷室高まで）' : ''}</span>
+              <span>最大積載 {kg(spec.maxPayload)} kg</span>
+              <span>容積 {spec.capacity} m³</span>
+              <span>緩衝材 {clearanceJa(clearance)}</span>
+            </p>
           </div>
 
-          <div className="grid gap-3 @2xl:grid-cols-3">
-            <VolumeMeter result={result} />
-            <Meter
-              label="重量消化率（kg）"
-              text={`現在 ${kg(result.loadedWeight)} kg / ${kg(spec.maxPayload)} kg (${pct(result.weightRatio)})`}
-              ratio={result.weightRatio}
-              note={`貨物の総重量 ${kg(result.totalWeight)} kg`}
-              color={result.overweight ? 'bg-rose-500' : 'bg-sky-500'}
-            />
-            <Meter
-              label="床面積占有率（%）"
-              text={`床面 ${result.grossFloorArea.toFixed(1)} m² / ${result.containerFloorArea.toFixed(1)} m² (${pct(result.floorRatio)})`}
-              ratio={result.floorRatio}
-              note={`${result.grossFloorArea - result.floorArea > 0.005 ? `緩衝材込み（貨物の底面のみ ${result.floorArea.toFixed(1)} m²）・` : ''}奥から ${mm(result.usedLength)} mm まで使用（荷室長の ${pct0(result.usedLength / spec.length)}）`}
-              color="bg-teal-500"
-            />
+          <div className="grid gap-2 @3xl:grid-cols-2">
+            <SuggestionBadge suggestion={sea} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
+            <SuggestionBadge suggestion={truck} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
           </div>
 
           {alerts.length > 0 && (
-            <ul className="space-y-1.5" aria-live="polite">
+            <ul className="space-y-1" aria-live="polite">
               {alerts.map((alert) => (
                 <li
                   key={alert.text}
                   className={cx(
-                    'flex items-start gap-2 rounded-lg px-3 py-2 text-xs leading-relaxed',
+                    'flex items-start gap-2 rounded-lg px-2.5 py-1.5 text-xs leading-relaxed',
                     alert.tone === 'error' && 'bg-rose-50 text-rose-800 ring-1 ring-rose-200',
                     alert.tone === 'warning' && 'bg-amber-50 text-amber-900 ring-1 ring-amber-200',
                     alert.tone === 'ok' && 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200',
@@ -502,53 +474,121 @@ export function VanningPanel({ container, cargo, cushioning, dispatch, today }: 
               ))}
             </ul>
           )}
-        </div>
-      </Card>
 
-      <div className="@container">
-        <div className="grid items-start gap-4 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
-          <Card icon={<Package size={18} />} title="貨物リスト" subtitle="木箱・パレット・カートン（寸法は外寸 mm）">
-            <CargoList cargo={cargo} statuses={result.items} clearance={clearance} dispatch={dispatch} />
-          </Card>
-          <Card icon={<Box size={18} />} title="3D 積載ビュー" subtitle={`${spec.nameJa}：奥（前壁）からドアに向かって積み付け`}>
-            <ViewerBoundary>
-              <Suspense fallback={<ViewerPlaceholder />}>
-                <LoadViewer3D
-                  spec={spec}
-                  placements={result.placements}
-                  items={cargo}
-                  clearance={clearance}
-                  snapshot={snapshot}
-                />
-              </Suspense>
-            </ViewerBoundary>
-            {hasCargo && (
-              <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
-                {cargo.map((item, i) => {
-                  const status = result.items[i]
-                  const missing = status ? status.total - status.loaded : 0
-                  return (
-                    <li key={item.id} className="flex min-w-0 items-center gap-1.5">
-                      <span className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-slate-900/30" style={{ backgroundColor: item.color }} />
-                      <span className="max-w-48 truncate">{item.name}</span>
-                      <span className={cx('tabular-nums', missing > 0 ? 'font-semibold text-rose-600' : 'text-slate-500')}>
-                        {status?.loaded ?? 0}/{item.quantity}
-                      </span>
-                    </li>
-                  )
-                })}
-                {showsCushion && (
-                  <li className="flex items-center gap-1.5 text-amber-800">
-                    <span className="h-3 w-3 shrink-0 rounded-sm border border-dashed border-amber-600 bg-amber-200/60" />
-                    緩衝材を含めた占有境界（{clearanceJa(clearance)}
-                    {cargo.some((item) => item.margin > 0) ? '・個別緩衝材あり' : ''}）
+          <div className="flex flex-wrap items-center gap-2">
+            <div role="group" aria-label="カメラ視点" className="inline-flex flex-wrap rounded-xl bg-slate-100 p-1">
+              {VIEWS.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  title={v.title}
+                  aria-pressed={activeView === v.id}
+                  onClick={() => changeView(v.id)}
+                  className={cx(
+                    'rounded-lg px-2.5 py-1.5 text-xs font-medium whitespace-nowrap transition',
+                    focusRing,
+                    activeView === v.id ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-600 hover:text-slate-900',
+                  )}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-slate-400">ドラッグで回転・右ドラッグで移動・ホイールでズーム</span>
+            <button type="button" className={cx(btn.primary, 'ml-auto')} onClick={() => viewerRef.current?.save()} disabled={!viewerReady}>
+              <ImageDown size={16} />
+              3D画像を保存（PNG）
+            </button>
+          </div>
+        </header>
+
+        <div className="px-4 pt-3 pb-3 sm:px-5">
+          <ViewerBoundary>
+            <Suspense fallback={<ViewerPlaceholder />}>
+              <LoadViewer3D
+                ref={viewerRef}
+                spec={spec}
+                placements={result.placements}
+                items={cargo}
+                clearance={clearance}
+                snapshot={snapshot}
+                view={view}
+                showCushion={showGuide}
+                onUserMove={setMovedFor}
+                onReady={setViewerReady}
+              />
+            </Suspense>
+          </ViewerBoundary>
+          {hasCargo && (
+            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600">
+              {cargo.map((item, i) => {
+                const status = result.items[i]
+                const missing = status ? status.total - status.loaded : 0
+                return (
+                  <li key={item.id} className="flex min-w-0 items-center gap-1.5">
+                    <span className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-slate-900/30" style={{ backgroundColor: item.color }} />
+                    <span className="max-w-56 truncate">{item.name}</span>
+                    <span className={cx('tabular-nums', missing > 0 ? 'font-semibold text-rose-600' : 'text-slate-500')}>
+                      {status?.loaded ?? 0}/{item.quantity}
+                    </span>
                   </li>
-                )}
-              </ul>
-            )}
-          </Card>
+                )
+              })}
+              {showsCushion && showGuide && (
+                <li className="flex items-center gap-1.5 text-amber-800">
+                  <span className="h-3 w-3 shrink-0 rounded-sm border border-dashed border-amber-600 bg-amber-200/60" />
+                  緩衝材を含めた占有境界
+                </li>
+              )}
+            </ul>
+          )}
         </div>
-      </div>
+
+        <footer className="grid grid-cols-2 gap-2 rounded-b-xl border-t border-slate-100 bg-slate-50/70 px-4 py-3 sm:px-5 @3xl:grid-cols-4">
+          <CompactMeter
+            label="純粋貨物容積（Net m³）"
+            ratio={result.volumeRatio}
+            value={`現在 ${m3(result.loadedVolume)} m³ / ${spec.capacity} m³`}
+            note={result.loadedPieces < result.totalPieces ? `全貨物 ${m3(result.totalVolume)} m³` : '貨物の実寸の合計'}
+            color="bg-indigo-500"
+          />
+          <CompactMeter
+            label="緩衝材込み占有容積（Gross m³）"
+            ratio={result.grossVolumeRatio}
+            value={`現在 ${m3(result.loadedGrossVolume)} m³ / ${spec.capacity} m³`}
+            note={cushionVolume > 0.005 ? `緩衝材・隙間 +${m3(cushionVolume)} m³` : '緩衝材なし（正味と同じ）'}
+            color="bg-indigo-300"
+            striped
+          />
+          <CompactMeter
+            label="重量消化率（kg）"
+            ratio={result.weightRatio}
+            value={`現在 ${kg(result.loadedWeight)} kg / ${kg(spec.maxPayload)} kg`}
+            note={result.overweight ? `貨物の総重量 ${kg(result.totalWeight)} kg（超過）` : `貨物の総重量 ${kg(result.totalWeight)} kg`}
+            color={result.overweight ? 'bg-rose-500' : 'bg-sky-500'}
+          />
+          <CompactMeter
+            label="床面積占有率（%）"
+            ratio={result.floorRatio}
+            value={`床面 ${result.grossFloorArea.toFixed(1)} m² / ${result.containerFloorArea.toFixed(1)} m²`}
+            note={`奥から ${mm(result.usedLength)} mm まで使用（荷室長の ${pct0(result.usedLength / spec.length)}）`}
+            color="bg-teal-500"
+          />
+        </footer>
+      </section>
+
+      {/* 2. Cargo card: cushioning bar on top, cargo table below */}
+      <section aria-label="貨物リストと緩衝材設定" className="w-full rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <CushioningBar
+          category={spec.category}
+          spec={spec}
+          settings={cushioning[spec.category]}
+          dispatch={dispatch}
+          showGuide={showGuide}
+          onShowGuideChange={setShowGuide}
+        />
+        <CargoList cargo={cargo} statuses={result.items} clearance={clearance} dispatch={dispatch} />
+      </section>
     </div>
   )
 }
