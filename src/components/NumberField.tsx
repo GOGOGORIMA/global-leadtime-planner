@@ -2,6 +2,17 @@ import { useState } from 'react'
 import { cx, inputClass } from './classes'
 
 /**
+ * Right padding (px) that keeps the digits clear of the unit: the unit's right offset, its
+ * estimated width (CJK ≈ 1 em, other characters ≈ 0.65 em) and a small gap — never less than the
+ * padding short units such as `mm` / `円` have always had, so only longer units (`円/m³`) widen it.
+ */
+function suffixPadding(suffix: string, compact: boolean): number {
+  const fontPx = compact ? 10 : 11
+  const em = [...suffix].reduce((sum, ch) => sum + (ch.charCodeAt(0) > 0x2e7f ? 1 : 0.65), 0)
+  return Math.max(compact ? 28 : 36, Math.ceil((compact ? 6 : 10) + em * fontPx + 4))
+}
+
+/**
  * Numeric input that only commits valid numbers (the reducer clamps them to the allowed range).
  * The typed text is kept while editing ("12." stays) and re-synced on blur / outside changes.
  */
@@ -58,12 +69,8 @@ export function NumberField({
         if (e.target.value.trim() !== '' && Number.isFinite(n)) onChange(n)
       }}
       onBlur={() => setDraft(String(value))}
-      className={cx(
-        inputClass,
-        'no-spinner text-right tabular-nums',
-        compact ? 'px-1.5 py-1.5 text-[13px]' : 'px-2 py-1.5',
-        suffix && (compact ? 'pr-7' : 'pr-9'),
-      )}
+      className={cx(inputClass, 'no-spinner text-right tabular-nums', compact ? 'px-1.5 py-1.5 text-[13px]' : 'px-2 py-1.5')}
+      style={suffix ? { paddingRight: suffixPadding(suffix, compact) } : undefined}
     />
   )
   const field = suffix ? (

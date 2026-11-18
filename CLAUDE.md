@@ -76,7 +76,7 @@ src/
   utils/clipboard.ts       クリップボードコピー（非セキュアコンテキスト用フォールバック付き）
   components/              UI（下記）。classes.ts = 共有クラス文字列、styles.ts = 日ステータス/工程の配色、
                            CountryFlag.tsx = 国旗画像（絵文字は使わない）、tabIds.ts = タブ／タブパネルの DOM id、
-                           NumberField.tsx = 数値入力（有効な数値だけを確定、単位表示付き、表の行用の compact 表示）、
+                           NumberField.tsx = 数値入力（有効な数値だけを確定、単位表示付き（`円/m³` など長い単位は文字幅から右余白を広げ、数字と重ならない）、表の行用の compact 表示）、
                            quoteStyles.ts = 見積ボードのコスト系列（チャートの色・バッジ名）・条件名・金額の書式・推奨の表記、
                            quoteFormParts.tsx = 見積フォームの部品（見出し・自動/手動チップ・スライダー・USD⇄円・規格×数量の選択）
 ```

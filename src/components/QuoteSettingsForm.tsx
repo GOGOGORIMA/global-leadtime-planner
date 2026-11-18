@@ -223,7 +223,9 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
                 onChange={(e) => onChange({ packingCost: e.target.checked })}
               />
               <span className="min-w-0">
-                <span className="block text-sm font-medium text-slate-800">輸出木箱・パレット梱包費を M3 単価で自動算入する</span>
+                <span className="block text-sm font-medium text-slate-800">
+                  輸出木箱・パレット梱包費を <span className="inline-block">M3 単価で自動算入する</span>
+                </span>
                 <span className="block text-[11px] text-slate-500">EXW に「概算M3 × 梱包単価」を加算します。</span>
               </span>
             </label>
