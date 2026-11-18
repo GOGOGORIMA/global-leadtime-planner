@@ -1,5 +1,6 @@
-import { isContainerId, type ContainerCategory, type ContainerId } from '../data/containers'
+import { getContainerSpec, isContainerId, type ContainerCategory, type ContainerId } from '../data/containers'
 import { isKnownCountry } from '../data/countries'
+import { CURRENCY_INFO, DEFAULT_USD_RATE, isQuoteCurrency } from '../data/currencies'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
@@ -7,20 +8,35 @@ import {
   type CountrySettings,
   type CushionSettings,
   type DayOverride,
+  type MoneyAmount,
   type PlannerState,
   type PlannerTab,
+  type QuoteSettings,
   type Step,
+  type UnitCount,
 } from '../types'
 import { isISODate, normalizeStepDays, type ISODate, type ScheduleMode } from '../utils/dateCalc'
+import { FREIGHT_ORIGIN, isFreightMarket, isShippingMode } from '../utils/freightRates'
 import { isValidTimeZone } from '../utils/timezone'
 import {
   DEFAULT_CUSHIONING,
+  DEFAULT_QUOTE,
   MAX_CARGO_DIMENSION,
   MAX_CARGO_ITEMS,
   MAX_CARGO_QUANTITY,
   MAX_CARGO_WEIGHT,
   MAX_CUSHION,
+  MAX_DUTY_RATE,
+  MAX_FREIGHT_BUFFER,
+  MAX_FX_BUFFER,
+  MAX_FX_RATE,
+  MAX_INSURANCE_RATE,
   MAX_PARTNERS,
+  MAX_QUOTE_CHARGE,
+  MAX_QUOTE_PRICE,
+  MAX_QUOTE_UNITS,
+  MAX_QUOTE_VOLUME,
+  MAX_QUOTE_WEIGHT,
   MAX_STACK_CUSHION,
   MAX_STEPS,
   createId,
@@ -57,6 +73,8 @@ export type PlannerAction =
   | { type: 'setCargo'; cargo: ReadonlyArray<Partial<CargoDefinition>> }
   | { type: 'setCushioning'; category: ContainerCategory; patch: Partial<CushionSettings> }
   | { type: 'resetCushioning'; category: ContainerCategory }
+  | { type: 'setQuote'; patch: Partial<QuoteSettings> }
+  | { type: 'resetQuote' }
   | { type: 'replace'; state: PlannerState }
 
 const MAX_LABEL_LENGTH = 80
@@ -95,6 +113,76 @@ export function sanitizeCushion(input: Partial<CushionSettings> | undefined, fal
     wall: clampInt(input?.wall, 0, MAX_CUSHION, fallback.wall),
     stack: typeof input?.stack === 'boolean' ? input.stack : fallback.stack,
     stackGap: clampInt(input?.stackGap, 0, MAX_STACK_CUSHION, fallback.stackGap),
+  }
+}
+
+/** A finite number clamped to [min, max] and rounded to `decimals`, else `fallback`. */
+function clampNumber(value: unknown, min: number, max: number, decimals: number, fallback: number): number {
+  if (value === null || value === undefined || value === '') return fallback
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  const factor = 10 ** decimals
+  return Math.min(max, Math.max(min, Math.round(n * factor) / factor))
+}
+
+/** `null` stays `null` ("automatic"); anything else is clamped like {@link clampNumber}. */
+function optionalNumber(value: unknown, max: number, decimals: number): number | null {
+  if (value === null || value === undefined) return null
+  const n = clampNumber(value, 0, max, decimals, Number.NaN)
+  return Number.isNaN(n) ? null : n
+}
+
+/** Exchange rate (JPY per unit): positive, at most 100,000, 4 decimals; otherwise `fallback`. */
+function sanitizeRate(value: unknown, fallback: number): number {
+  const n = Number(value)
+  return value !== null && value !== '' && Number.isFinite(n) && n > 0 ? clampNumber(n, 0.0001, MAX_FX_RATE, 4, fallback) : fallback
+}
+
+function sanitizeMoney(value: Partial<MoneyAmount> | null | undefined): MoneyAmount | null {
+  if (!value || (value.currency !== 'JPY' && value.currency !== 'USD')) return null
+  const amount = optionalNumber(value.amount, MAX_QUOTE_CHARGE, value.currency === 'JPY' ? 0 : 2)
+  return amount === null ? null : { amount, currency: value.currency }
+}
+
+function sanitizeUnits(value: Partial<UnitCount> | null | undefined, category: ContainerCategory): UnitCount | null {
+  if (!value || !isContainerId(value.id) || getContainerSpec(value.id).category !== category) return null
+  return { id: value.id, units: clampInt(value.units, 1, MAX_QUOTE_UNITS, 1) }
+}
+
+/**
+ * Makes the quotation settings safe: amounts 0–1,000 億円 / 10 億円, rates > 0, FX buffer 0–10 %,
+ * freight contingency 0–30 %, insurance 0–5 %, duty 0–30 %, known destination (never the origin).
+ * The FX rate of JPY quotes is always 1.
+ */
+export function sanitizeQuote(input: Partial<QuoteSettings> | undefined, fallback: QuoteSettings = DEFAULT_QUOTE): QuoteSettings {
+  const q = input ?? {}
+  const currency = isQuoteCurrency(q.currency) ? q.currency : fallback.currency
+  const defaultRate = CURRENCY_INFO[currency].defaultRate
+  const destination =
+    typeof q.destination === 'string' && q.destination !== FREIGHT_ORIGIN && isKnownCountry(q.destination)
+      ? q.destination
+      : ''
+  return {
+    exw: clampNumber(q.exw, 0, MAX_QUOTE_PRICE, 0, fallback.exw),
+    currency,
+    fxRate: currency === 'JPY' ? 1 : sanitizeRate(q.fxRate, defaultRate),
+    fxBuffer: clampNumber(q.fxBuffer, 0, MAX_FX_BUFFER, 1, fallback.fxBuffer),
+    usdRate: sanitizeRate(q.usdRate, DEFAULT_USD_RATE),
+    domestic: optionalNumber(q.domestic, MAX_QUOTE_CHARGE, 0),
+    exportCharges: optionalNumber(q.exportCharges, MAX_QUOTE_CHARGE, 0),
+    mode: isShippingMode(q.mode) ? q.mode : fallback.mode,
+    destination,
+    market: isFreightMarket(q.market) ? q.market : fallback.market,
+    freight: sanitizeMoney(q.freight),
+    freightBuffer: clampNumber(q.freightBuffer, 0, MAX_FREIGHT_BUFFER, 1, fallback.freightBuffer),
+    insuranceRate: clampNumber(q.insuranceRate, 0, MAX_INSURANCE_RATE, 3, fallback.insuranceRate),
+    local: sanitizeMoney(q.local),
+    dutyRate: clampNumber(q.dutyRate, 0, MAX_DUTY_RATE, 2, fallback.dutyRate),
+    validUntil: isISODate(q.validUntil) ? q.validUntil : null,
+    volume: optionalNumber(q.volume, MAX_QUOTE_VOLUME, 3),
+    weight: optionalNumber(q.weight, MAX_QUOTE_WEIGHT, 1),
+    container: sanitizeUnits(q.container, 'sea'),
+    truck: sanitizeUnits(q.truck, 'truck'),
   }
 }
 
@@ -206,6 +294,7 @@ export function sanitizeState(input: PlannerState, fallback: PlannerState): Plan
       sea: sanitizeCushion(input.cushioning?.sea, fallback.cushioning?.sea ?? DEFAULT_CUSHIONING.sea),
       truck: sanitizeCushion(input.cushioning?.truck, fallback.cushioning?.truck ?? DEFAULT_CUSHIONING.truck),
     },
+    quote: sanitizeQuote(input.quote ?? fallback.quote),
   }
 }
 
@@ -395,6 +484,16 @@ export function plannerReducer(state: PlannerState, action: PlannerAction): Plan
         ...state,
         cushioning: { ...state.cushioning, [action.category]: { ...DEFAULT_CUSHIONING[action.category] } },
       }
+    case 'setQuote': {
+      const merged = { ...state.quote, ...action.patch }
+      // A new quote currency starts from its indicative rate unless a rate comes with it.
+      if (action.patch.currency && action.patch.currency !== state.quote.currency && action.patch.fxRate === undefined) {
+        merged.fxRate = isQuoteCurrency(action.patch.currency) ? CURRENCY_INFO[action.patch.currency].defaultRate : state.quote.fxRate
+      }
+      return { ...state, quote: sanitizeQuote(merged, state.quote) }
+    }
+    case 'resetQuote':
+      return { ...state, quote: { ...DEFAULT_QUOTE } }
     case 'replace':
       return action.state
     default:

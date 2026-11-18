@@ -4,6 +4,7 @@ import { CountryPanel } from './components/CountryPanel'
 import { CountrySettingsModal } from './components/CountrySettingsModal'
 import { ExportPanel } from './components/ExportPanel'
 import { MeetingPlanner } from './components/MeetingPlanner'
+import { QuotePanel } from './components/QuotePanel'
 import { SchedulePanel } from './components/SchedulePanel'
 import { tabButtonId, tabPanelId } from './components/tabIds'
 import { TabBar } from './components/TabBar'
@@ -16,6 +17,7 @@ import { CALENDAR_DAYS, type CountrySettings, type PlannerState, type PlannerTab
 import { buildCalendarMap, makeCalendarResolver, resolveSelectedCountries } from './utils/calendars'
 import { computeSchedule, type ISODate } from './utils/dateCalc'
 import { DEFAULT_EXPORT_OPTIONS } from './utils/exportText'
+import { resolveDestination } from './utils/quotation'
 import { buildScheduleReport } from './utils/report'
 import { STORAGE_KEYS } from './utils/storage'
 import { todayInTimeZone } from './utils/timezone'
@@ -38,7 +40,7 @@ export default function App() {
   const [meetingDate, setMeetingDate] = useState<ISODate | null>(null)
   const [exportOptions, setExportOptions] = useStoredState(STORAGE_KEYS.exportOptions, DEFAULT_EXPORT_OPTIONS)
 
-  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab, container, cargo, cushioning } = state
+  const { base: baseCode, partners, settings, overrides, mode, anchor, steps, tab, container, cargo, cushioning, quote } = state
   const countries = useMemo(
     () => resolveSelectedCountries({ base: baseCode, partners, settings }),
     [baseCode, partners, settings],
@@ -52,6 +54,10 @@ export default function App() {
   const base = countries[0]
   const today = todayInTimeZone(base.timeZone, now)
   const recipientCountry = resolveRecipient(exportOptions.recipientCountry, state)
+  // Quotation destination: the board's choice, else the schedule's partner (URL state only, so a
+  // shared link always reproduces the same prices).
+  const autoDestination = resolveDestination('', resolveRecipient('', state), partners)
+  const quoteDestination = resolveDestination(quote.destination, autoDestination, partners)
 
   const report = useMemo(
     () =>
@@ -151,14 +157,37 @@ export default function App() {
                 cargo={cargo}
                 container={container}
                 cushioning={cushioning}
+                quote={quote}
+                quoteDestination={quoteDestination}
                 options={exportOptions}
                 onOptionsChange={setExportOptions}
                 onShowMeeting={() => setTab('meeting')}
                 onShowVanning={() => setTab('vanning')}
+                onShowQuote={() => setTab('quote')}
               />
             )}
             {tab === 'vanning' && (
               <VanningPanel container={container} cargo={cargo} cushioning={cushioning} dispatch={dispatch} today={today} />
+            )}
+            {tab === 'quote' && (
+              <QuotePanel
+                quote={quote}
+                cargo={cargo}
+                container={container}
+                cushioning={cushioning}
+                countries={countries}
+                destination={quoteDestination}
+                autoDestination={autoDestination}
+                today={today}
+                report={report}
+                exportOptions={exportOptions}
+                dispatch={dispatch}
+                onShowVanning={() => setTab('vanning')}
+                onShowExport={() => {
+                  setExportOptions({ format: 'quote' })
+                  setTab('export')
+                }}
+              />
             )}
           </div>
 

@@ -1,6 +1,14 @@
 import { DEFAULT_CONTAINER } from '../data/containers'
 import { DEFAULT_BASE_COUNTRY, PRESET_PARTNER_COUNTRIES } from '../data/countries'
-import { CALENDAR_DAYS, type CargoItem, type CushionSettings, type PlannerState, type Step } from '../types'
+import { CURRENCY_INFO, DEFAULT_QUOTE_CURRENCY, DEFAULT_USD_RATE } from '../data/currencies'
+import {
+  CALENDAR_DAYS,
+  type CargoItem,
+  type CushionSettings,
+  type PlannerState,
+  type QuoteSettings,
+  type Step,
+} from '../types'
 import { addDays, type ISODate } from '../utils/dateCalc'
 
 export const MAX_STEPS = 20
@@ -30,6 +38,50 @@ export const WALL_PRESETS = [0, 20, 50] as const
 export const STACK_PRESETS = [0, 10, 20, 50] as const
 /** Default requested delivery date for the backward mode: today + 60 days. */
 export const DEFAULT_LEAD_DAYS = 60
+
+/** Quotation board limits (JPY amounts, rates, percentages). */
+export const MAX_QUOTE_PRICE = 100_000_000_000
+export const MAX_QUOTE_CHARGE = 1_000_000_000
+export const MAX_FX_RATE = 100_000
+export const MAX_FX_BUFFER = 10
+export const MAX_FREIGHT_BUFFER = 30
+export const MAX_INSURANCE_RATE = 5
+export const MAX_DUTY_RATE = 30
+export const MAX_QUOTE_VOLUME = 100_000
+export const MAX_QUOTE_WEIGHT = 10_000_000
+export const MAX_QUOTE_UNITS = 99
+/** Default quotation validity: today + 14 days. */
+export const DEFAULT_VALIDITY_DAYS = 14
+
+/**
+ * Quotation board defaults: a sample EXW price in USD with a 3 % FX buffer, FCL to the schedule's
+ * partner country at normal market rates, 10 % freight contingency, 0.20 % insurance, 5 % duty.
+ */
+export const DEFAULT_QUOTE: Readonly<QuoteSettings> = {
+  exw: 5_000_000,
+  currency: DEFAULT_QUOTE_CURRENCY,
+  fxRate: CURRENCY_INFO[DEFAULT_QUOTE_CURRENCY].defaultRate,
+  fxBuffer: 3,
+  usdRate: DEFAULT_USD_RATE,
+  domestic: null,
+  exportCharges: null,
+  mode: 'fcl',
+  destination: '',
+  market: 'normal',
+  freight: null,
+  freightBuffer: 10,
+  insuranceRate: 0.2,
+  local: null,
+  dutyRate: 5,
+  validUntil: null,
+  volume: null,
+  weight: null,
+  container: null,
+  truck: null,
+}
+
+/** Quick-select import duty rates (%). */
+export const DUTY_PRESETS = [0, 3, 5, 10] as const
 
 let idCounter = 0
 
@@ -221,5 +273,6 @@ export function createDefaultState(today: ISODate): PlannerState {
     container: DEFAULT_CONTAINER,
     cargo: instantiateCargo(SAMPLE_CARGO),
     cushioning: { sea: { ...DEFAULT_CUSHIONING.sea }, truck: { ...DEFAULT_CUSHIONING.truck } },
+    quote: { ...DEFAULT_QUOTE },
   }
 }

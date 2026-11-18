@@ -3,9 +3,19 @@ import { CALENDAR_DAYS, type OverrideMap, type Step } from '../types'
 import { buildCalendarMap, makeCalendarResolver, resolveCountry } from './calendars'
 import { computeSchedule, type ScheduleMode } from './dateCalc'
 import { getContainerSpec } from '../data/containers'
-import { SAMPLE_CARGO, instantiateCargo } from '../state/defaults'
+import { DEFAULT_QUOTE, SAMPLE_CARGO, createDefaultState, instantiateCargo } from '../state/defaults'
 import { buildPackingSummary } from './binPacking'
-import { DEFAULT_EXPORT_OPTIONS, renderEmail, renderMeetingProposal, renderWhatsApp, type ExportOptions } from './exportText'
+import {
+  DEFAULT_EXPORT_OPTIONS,
+  renderEmail,
+  renderExport,
+  renderMeetingProposal,
+  renderQuotationEmail,
+  renderWhatsApp,
+  type ExportOptions,
+  type QuotationText,
+} from './exportText'
+import { buildQuotation } from './quotation'
 import { buildScheduleReport, type HolidayScope } from './report'
 
 const STEPS: Step[] = [
@@ -238,5 +248,92 @@ describe('Packing & Container Summary', () => {
     )
     expect(text).toContain('- Recommended equipment (road): not possible by standard truck (a package exceeds the inside dimensions)')
     expect(text).toContain('- Loading plan (40ft High Cube container): 0 of 1 pc fit – the remaining 1 pc requires additional space')
+  })
+})
+
+describe('Incoterms Price Quotation', () => {
+  const cargo = instantiateCargo(SAMPLE_CARGO)
+  const cushioning = createDefaultState('2026-11-18').cushioning
+  const quotation = (patch: Partial<typeof DEFAULT_QUOTE> = {}, destination = 'TH', destinationName = 'Thailand'): QuotationText => ({
+    quote: buildQuotation({ ...DEFAULT_QUOTE, ...patch }, cargo, '20dc', cushioning, destination, '2026-11-18'),
+    destinationName,
+  })
+
+  it('renders a stand-alone quotation e-mail with prices, cargo, validity and the freight disclaimer', () => {
+    const report = makeReport('backward', '2026-12-14')
+    const text = renderQuotationEmail(options({ format: 'quote', reference: 'Q-2026-118', senderName: 'Taro Yamada' }), quotation(), report)
+    const lines = text.split('\n')
+    expect(lines[0]).toBe('Subject: Price Quotation – EXW / FOB / CIF / DDP (Ref: Q-2026-118)')
+    expect(text).toContain(
+      [
+        'PRICE QUOTATION (USD)',
+        '- EXW Japan (Ex Works): USD 34,364.26',
+        '- FOB Japanese port (Free On Board): USD 35,426.80',
+        '- CIF Laem Chabang, Thailand (Cost, Insurance and Freight): USD 35,902.69',
+        '- DDP your premises, Thailand (Delivered Duty Paid): USD 38,110.20',
+      ].join('\n'),
+    )
+    expect(text).not.toContain('DAP')
+    expect(text).toContain('- Transport: Sea freight (FCL), 1 × 20ft Dry container, Japan → Thailand')
+    expect(text).toContain('- Cargo: 31 packages, 15.5 m³ (net volume), 3,160 kg (gross weight)')
+    expect(text).toContain('- Exchange rate basis: USD 1 = JPY 145.50')
+    expect(text).toContain('- DDP includes import duty estimated at 5% of the CIF value')
+    expect(text).toContain('VALIDITY\nThis quotation is valid until Wed, 2 Dec 2026.')
+    expect(text).toContain('FREIGHT DISCLAIMER\nOcean / air freight rates and surcharges')
+    expect(text).toContain('the CIF and DDP prices will be revised accordingly')
+    expect(text).toContain('For reference, to meet your requested delivery date of')
+    expect(lines.at(-1)).toBe('Taro Yamada')
+    // The internal FX / freight buffers are never mentioned.
+    expect(text).not.toMatch(/buffer|contingency|150\.00/i)
+    expect(renderExport(report, options({ format: 'quote' }), undefined, null, quotation())).toBe(
+      renderQuotationEmail(options({ format: 'quote' }), quotation(), report),
+    )
+  })
+
+  it('describes LCL, air and JPY quotations and warns in volatile markets', () => {
+    const lcl = renderQuotationEmail(options(), quotation({ mode: 'lcl', market: 'peak', volume: 2.5 }))
+    expect(lcl).toContain('- Transport: Sea freight (LCL), 3.16 R/T (W/M), Japan → Thailand')
+    expect(lcl).toContain('- Cargo: 2.50 m³ (net volume), 3,160 kg (gross weight)') // overridden volume: no package count
+    expect(lcl).toContain('FREIGHT DISCLAIMER\nFreight rates are currently at peak-season levels')
+    const air = renderQuotationEmail(options(), quotation({ mode: 'air', market: 'surge' }, 'DE', 'Germany'))
+    expect(air).toContain('- FOB Japanese airport (Free On Board)')
+    expect(air).toContain('- CIF main airport, Germany (Cost, Insurance and Freight)')
+    expect(air).toContain('- Transport: Air freight, chargeable weight 3,160 kg, Japan → Germany')
+    expect(air).toContain('- For air freight, FOB / CIF correspond to FCA / CIP (Incoterms® 2020).')
+    expect(air).toContain('Freight markets are currently highly volatile.')
+    const yen = renderQuotationEmail(options(), quotation({ currency: 'JPY', fxRate: 1 }, 'KH', 'Cambodia'))
+    expect(yen).toContain('- EXW Japan (Ex Works): JPY 5,000,000')
+    expect(yen).toContain('- CIF main port, Cambodia')
+    expect(yen).not.toContain('Exchange rate basis')
+  })
+
+  it('inserts the quotation into the standard e-mail and WhatsApp only when requested', () => {
+    const report = makeReport('backward', '2026-12-14')
+    expect(renderEmail(report, options(), undefined, null, quotation())).not.toContain('INCOTERMS PRICE QUOTATION')
+    const email = renderEmail(report, options({ includeQuote: true }), undefined, null, quotation())
+    const section = email.slice(email.indexOf('INCOTERMS PRICE QUOTATION'), email.indexOf('Please note that'))
+    expect(section.trim().split('\n').slice(0, 7)).toEqual([
+      'INCOTERMS PRICE QUOTATION (USD, Incoterms® 2020)',
+      '- EXW Japan: USD 34,364.26',
+      '- FOB Japanese port: USD 35,426.80',
+      '- CIF Laem Chabang, Thailand: USD 35,902.69',
+      '- DDP your premises, Thailand: USD 38,110.20',
+      '- Basis: Sea freight (FCL), 1 × 20ft Dry container; 15.5 m³ (net) / 3,160 kg (gross); USD 1 = JPY 145.50',
+      '- DDP includes import duty estimated at 5% of the CIF value',
+    ])
+    expect(section).toContain('- Valid until: Wed, 2 Dec 2026')
+    expect(section).toContain('Freight disclaimer: ')
+    const chat = renderWhatsApp(report, options({ format: 'whatsapp', includeQuote: true }), undefined, null, quotation())
+    expect(chat).toContain(
+      [
+        '*Price quotation* (USD, Incoterms® 2020)',
+        'EXW Japan: *USD 34,364.26*',
+        'FOB Japanese port: *USD 35,426.80*',
+        'CIF Laem Chabang, Thailand: *USD 35,902.69*',
+        'DDP your premises, Thailand: *USD 38,110.20*',
+        '🚢 FCL 1 × 20ft Dry · 15.5 m³ · 3,160 kg',
+        '⏳ Valid until 2 Dec 2026 – freight subject to change',
+      ].join('\n'),
+    )
   })
 })

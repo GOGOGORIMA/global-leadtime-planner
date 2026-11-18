@@ -72,6 +72,28 @@ describe('URL state', () => {
       sea: { gap: 0, wall: 0, stack: false, stackGap: 20 },
       truck: { gap: 100, wall: 20, stack: true, stackGap: 15 },
     },
+    quote: {
+      exw: 12_345_678,
+      currency: 'EUR',
+      fxRate: 171.25,
+      fxBuffer: 4.5,
+      usdRate: 148.5,
+      domestic: 60000,
+      exportCharges: null,
+      mode: 'lcl',
+      destination: 'DE',
+      market: 'peak',
+      freight: { amount: 1850.5, currency: 'USD' },
+      freightBuffer: 15,
+      insuranceRate: 0.25,
+      local: { amount: 98000, currency: 'JPY' },
+      dutyRate: 2.7,
+      validUntil: '2026-12-15',
+      volume: 12.345,
+      weight: 2500.5,
+      container: { id: '40hc', units: 2 },
+      truck: { id: '10t', units: 1 },
+    },
   }
 
   it('round-trips the full planner state', () => {
@@ -103,6 +125,58 @@ describe('URL state', () => {
     ])
     // Only modes that differ from their defaults are written.
     expect(params.getAll('cl')).toEqual(['truck.100.20.15.v'])
+    // Quotation board: only settings that differ from the defaults.
+    const quoteParams = Object.fromEntries([...params].filter(([key]) => key.startsWith('q')))
+    expect(quoteParams).toEqual({
+      qx: '12345678',
+      qcur: 'EUR',
+      qfx: '171.25',
+      qfb: '4.5',
+      qusd: '148.5',
+      qdom: '60000',
+      qm: 'lcl',
+      qdst: 'DE',
+      qmk: 'peak',
+      qfr: '1850.5USD',
+      qcb: '15',
+      qins: '0.25',
+      qloc: '98000JPY',
+      qduty: '2.7',
+      qval: '2026-12-15',
+      qv: '12.345',
+      qw: '2500.5',
+      qct: '40hc.2',
+      qtr: '10t.1',
+    })
+  })
+
+  it('writes no quotation keys for the defaults and sanitizes quotation input', () => {
+    expect([...new URLSearchParams(serializeState(fallback)).keys()].filter((k) => k.startsWith('q'))).toEqual([])
+    const q = parseState(
+      '?qx=-5&qcur=xyz&qfx=0&qfb=25&qusd=abc&qdom=1e12&qexp=-1&qm=ship&qdst=JP&qmk=crazy&qfr=12EUR' +
+        '&qcb=55&qins=9&qloc=-5USD&qduty=45&qval=2026-02-30&qv=-3&qw=nope&qct=2t.3&qtr=40hc.1',
+      fallback,
+    ).state.quote
+    expect(q).toEqual({
+      ...fallback.quote,
+      exw: 0,
+      fxBuffer: 10,
+      domestic: 1_000_000_000,
+      exportCharges: 0,
+      freightBuffer: 30,
+      insuranceRate: 5,
+      dutyRate: 30,
+      volume: 0,
+    })
+    // A new currency starts from its indicative rate; JPY quotes always use 1.
+    expect(parseState('?qcur=EUR', fallback).state.quote).toMatchObject({ currency: 'EUR', fxRate: 172 })
+    expect(parseState('?qcur=jpy&qfx=150', fallback).state.quote).toMatchObject({ currency: 'JPY', fxRate: 1 })
+    // Unknown / origin destinations fall back to automatic; units are clamped to 1–99.
+    expect(parseState('?qdst=ZZ&qct=40dc.500&qtr=4t.0', fallback).state.quote).toMatchObject({
+      destination: '',
+      container: { id: '40dc', units: 99 },
+      truck: { id: '4t', units: 1 },
+    })
   })
 
   it('reads cushioning per transport mode and clamps it', () => {
@@ -186,6 +260,19 @@ describe('URL state', () => {
 })
 
 describe('plannerReducer', () => {
+  it('edits the quotation settings', () => {
+    let next = plannerReducer(fallback, { type: 'setQuote', patch: { currency: 'THB' } })
+    expect(next.quote).toMatchObject({ currency: 'THB', fxRate: 4.6 }) // indicative THB rate
+    next = plannerReducer(next, { type: 'setQuote', patch: { currency: 'USD', fxRate: 152.35 } })
+    expect(next.quote.fxRate).toBe(152.35)
+    next = plannerReducer(next, { type: 'setQuote', patch: { dutyRate: 40, destination: 'JP', freight: { amount: 900, currency: 'USD' } } })
+    expect(next.quote).toMatchObject({ dutyRate: 30, destination: '', freight: { amount: 900, currency: 'USD' } })
+    next = plannerReducer(next, { type: 'setQuote', patch: { freight: null, container: { id: '4t', units: 2 } } })
+    expect(next.quote.freight).toBeNull()
+    expect(next.quote.container).toBeNull() // trucks are not FCL containers
+    expect(plannerReducer(next, { type: 'resetQuote' }).quote).toEqual(fallback.quote)
+  })
+
   it('toggles overrides on and off', () => {
     const on = plannerReducer(fallback, { type: 'toggleOverride', country: 'TH', date: '2026-12-08', defaultWorking: true })
     expect(on.overrides.TH['2026-12-08']).toEqual({ kind: 'off' })
