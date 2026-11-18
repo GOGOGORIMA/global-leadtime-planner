@@ -52,6 +52,7 @@ describe('URL state', () => {
         stackable: false,
         rotatable: false,
         color: '#ef4444',
+        margin: 80,
       },
       {
         id: 'y',
@@ -64,8 +65,13 @@ describe('URL state', () => {
         stackable: true,
         rotatable: true,
         color: '#f59e0b',
+        margin: 0,
       },
     ],
+    cushioning: {
+      sea: { gap: 0, wall: 0, stack: false, stackGap: 20 },
+      truck: { gap: 100, wall: 20, stack: true, stackGap: 15 },
+    },
   }
 
   it('round-trips the full planner state', () => {
@@ -92,9 +98,26 @@ describe('URL state', () => {
     expect(params.get('tab')).toBe('calendar')
     expect(params.get('ct')).toBe('40hc')
     expect(params.getAll('cg')).toEqual([
-      '2200x1500x2400_1250.5_1_-_ef4444_Case #1 本体木箱_v2 (No.1)',
+      '2200x1500x2400_1250.5_1_m80_ef4444_Case #1 本体木箱_v2 (No.1)',
       '1100x1100x1000_300_6_sr_f59e0b_Accessories pallet',
     ])
+    // Only modes that differ from their defaults are written.
+    expect(params.getAll('cl')).toEqual(['truck.100.20.15.v'])
+  })
+
+  it('reads cushioning per transport mode and clamps it', () => {
+    const parsed = parseState('?ct=4t&cl=sea.30.20.10.v&cl=truck.900.-5.99.h&cl=air.1.1.1.v', fallback).state
+    expect(parsed.cushioning).toEqual({
+      sea: { gap: 30, wall: 20, stack: true, stackGap: 10 },
+      truck: { gap: 500, wall: 0, stack: false, stackGap: 50 }, // gap/wall ≤ 500 mm, tiers ≤ 50 mm
+    })
+    // Without `cl` the defaults apply: containers 0 mm, trucks 50 mm between pieces / 30 mm to the walls.
+    expect(parseState('?ct=4t', fallback).state.cushioning).toEqual({
+      sea: { gap: 0, wall: 0, stack: false, stackGap: 20 },
+      truck: { gap: 50, wall: 30, stack: false, stackGap: 20 },
+    })
+    // Links from before the per-cargo margin still parse (no `m` flag → 0 mm).
+    expect(parseState('?cg=1100x1100x1000_300_6_sr_f59e0b_Pallet', fallback).state.cargo[0].margin).toBe(0)
   })
 
   it('keeps an empty cargo list and drops malformed cargo rows', () => {
@@ -107,8 +130,8 @@ describe('URL state', () => {
     expect(parsed.container).toBe(fallback.container) // unknown container id → default
     expect(parsed.cargo.map(({ id: _id, ...rest }) => rest)).toEqual([
       // clamped to 1–20,000 mm, 0 kg, 999 pcs; default name and a palette color
-      { name: 'Case #1', length: 1, width: 20000, height: 300, weight: 0, quantity: 999, stackable: false, rotatable: true, color: '#6366f1' },
-      { name: 'Carton', length: 600, width: 400, height: 400, weight: 15.3, quantity: 24, stackable: true, rotatable: true, color: '#10b981' },
+      { name: 'Case #1', length: 1, width: 20000, height: 300, weight: 0, quantity: 999, stackable: false, rotatable: true, color: '#6366f1', margin: 0 },
+      { name: 'Carton', length: 600, width: 400, height: 400, weight: 15.3, quantity: 24, stackable: true, rotatable: true, color: '#10b981', margin: 0 },
     ])
     // A link without cargo parameters keeps the default sample shipment.
     expect(parseState('?base=JP', fallback).state.cargo.length).toBe(fallback.cargo.length)
@@ -199,6 +222,17 @@ describe('plannerReducer', () => {
     expect(s.cargo[2].id).not.toBe(id)
     s = plannerReducer(s, { type: 'removeCargo', id })
     expect(s.cargo.map((c) => c.color)).toEqual(['#6366f1', '#10b981'])
+    s = plannerReducer(s, { type: 'updateCargo', id: s.cargo[0].id, patch: { margin: 1200 } })
+    expect(s.cargo[0].margin).toBe(500)
+  })
+
+  it('keeps cushioning per transport mode', () => {
+    expect(fallback.cushioning.truck).toEqual({ gap: 50, wall: 30, stack: false, stackGap: 20 })
+    let s = plannerReducer(fallback, { type: 'setCushioning', category: 'truck', patch: { gap: 0, stack: true, stackGap: 80 } })
+    expect(s.cushioning.truck).toEqual({ gap: 0, wall: 30, stack: true, stackGap: 50 })
+    expect(s.cushioning.sea).toEqual(fallback.cushioning.sea)
+    s = plannerReducer(s, { type: 'resetCushioning', category: 'truck' })
+    expect(s.cushioning.truck).toEqual({ gap: 50, wall: 30, stack: false, stackGap: 20 })
   })
 
   it('adds, moves, updates and removes steps', () => {

@@ -4,7 +4,7 @@
  * This module is loaded lazily with tab ⑤, so the three.js chunk is only downloaded when the
  * loading simulator is opened. Rendering is on demand (camera moves, data changes, resize).
  */
-import { ImageDown } from 'lucide-react'
+import { ImageDown, Layers } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   AmbientLight,
@@ -20,6 +20,7 @@ import {
   Float32BufferAttribute,
   Group,
   LineBasicMaterial,
+  LineDashedMaterial,
   LineLoop,
   LineSegments,
   Mesh,
@@ -41,7 +42,7 @@ import {
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { ContainerSpec } from '../data/containers'
 import type { CargoItem } from '../types'
-import type { Placement } from '../utils/binPacking'
+import type { Clearance, Placement } from '../utils/binPacking'
 import { btn, cx, focusRing } from './classes'
 
 export type CameraView = 'oblique' | 'side' | 'top' | 'door'
@@ -61,6 +62,8 @@ interface LoadViewer3DProps {
   spec: ContainerSpec
   placements: readonly Placement[]
   items: readonly CargoItem[]
+  /** Cushioning / clearance used for the plan (draws the occupied boxes and the usable area). */
+  clearance: Clearance
   snapshot: SnapshotInfo
 }
 
@@ -139,6 +142,8 @@ class LoadScene {
   private readonly controls: OrbitControls
   private readonly spaceGroup = new Group()
   private readonly cargoGroup = new Group()
+  /** Occupied boxes incl. cushioning + the usable-area outline (toggled by the user). */
+  private readonly cushionGroup = new Group()
   private readonly raycaster = new Raycaster()
   private readonly host: HTMLElement
   private readonly observer: ResizeObserver
@@ -171,7 +176,7 @@ class LoadScene {
     sun.position.set(6, 12, 8)
     const fill = new DirectionalLight(0xffffff, 0.9)
     fill.position.set(-8, 5, -6)
-    this.scene.add(sun, fill, this.spaceGroup, this.cargoGroup)
+    this.scene.add(sun, fill, this.spaceGroup, this.cargoGroup, this.cushionGroup)
 
     this.observer = new ResizeObserver(() => this.resize())
     this.observer.observe(host)
@@ -397,6 +402,67 @@ class LoadScene {
     this.requestRender()
   }
 
+  /**
+   * Draws the space each piece takes up including cushioning (translucent light-yellow box with a
+   * dashed amber outline, clipped to the cargo space) and the usable area inside the wall clearance.
+   */
+  setCushion(placements: readonly Placement[], clearance: Clearance) {
+    disposeTree(this.cushionGroup)
+    const spec = this.spec
+    if (!spec) return
+    const L = spec.length * MM
+    const W = spec.width * MM
+    const fill = new MeshBasicMaterial({ color: 0xfde68a, transparent: true, opacity: 0.22, depthWrite: false })
+    const outline = new LineDashedMaterial({ color: 0xd97706, dashSize: 0.045, gapSize: 0.03, transparent: true, opacity: 0.9 })
+    const shapes = new Map<string, { box: BoxGeometry; edges: EdgesGeometry }>()
+    const clip = (start: number, size: number, max: number): [number, number] => [Math.max(0, start), Math.min(max, start + size)]
+    for (const p of placements) {
+      const o = p.occupied
+      if (o.length === p.length && o.width === p.width && o.height === p.height) continue // no cushioning
+      const [x1, x2] = clip(o.x, o.length, spec.length)
+      const [y1, y2] = clip(o.y, o.width, spec.width)
+      const [z1, z2] = clip(o.z, o.height, spec.height)
+      const key = `${x2 - x1}|${y2 - y1}|${z2 - z1}`
+      let shape = shapes.get(key)
+      if (!shape) {
+        const box = new BoxGeometry((x2 - x1) * MM, (z2 - z1) * MM, (y2 - y1) * MM)
+        shape = { box, edges: new EdgesGeometry(box) }
+        shapes.set(key, shape)
+      }
+      const mesh = new Mesh(shape.box, fill)
+      mesh.position.set(((x1 + x2) / 2) * MM - L / 2, ((z1 + z2) / 2) * MM, ((y1 + y2) / 2) * MM - W / 2)
+      mesh.renderOrder = 2
+      const edges = new LineSegments(shape.edges, outline)
+      edges.position.copy(mesh.position)
+      edges.computeLineDistances()
+      this.cushionGroup.add(mesh, edges)
+    }
+    if (clearance.wall > 0) {
+      // Usable area on the floor (inside the wall clearance), dashed.
+      const m = clearance.wall * MM
+      const corners = [
+        [-L / 2 + m, 0.004, -W / 2 + m],
+        [L / 2 - m, 0.004, -W / 2 + m],
+        [L / 2 - m, 0.004, W / 2 - m],
+        [-L / 2 + m, 0.004, W / 2 - m],
+      ].flat()
+      const geometry = new BufferGeometry()
+      geometry.setAttribute('position', new Float32BufferAttribute(corners, 3))
+      const area = new LineLoop(
+        geometry,
+        new LineDashedMaterial({ color: 0xd97706, dashSize: 0.12, gapSize: 0.07 }),
+      )
+      area.computeLineDistances()
+      this.cushionGroup.add(area)
+    }
+    this.requestRender()
+  }
+
+  setCushionVisible(visible: boolean) {
+    this.cushionGroup.visible = visible
+    this.requestRender()
+  }
+
   /** Frames one of the preset camera views around the cargo space (and truck). */
   setView(view: CameraView) {
     const b = this.bounds
@@ -487,6 +553,7 @@ class LoadScene {
     this.controls.dispose()
     disposeTree(this.spaceGroup)
     disposeTree(this.cargoGroup)
+    disposeTree(this.cushionGroup)
     this.renderer.dispose()
   }
 }
@@ -616,7 +683,7 @@ function downloadCanvas(canvas: HTMLCanvasElement, fileName: string) {
   }, 'image/png')
 }
 
-export default function LoadViewer3D({ spec, placements, items, snapshot }: LoadViewer3DProps) {
+export default function LoadViewer3D({ spec, placements, items, clearance, snapshot }: LoadViewer3DProps) {
   const sceneRef = useRef<LoadScene | null>(null)
   /** Preset applied when the container changes (kept in a ref so the effect does not re-run). */
   const viewRef = useRef<CameraView>('oblique')
@@ -664,6 +731,18 @@ export default function LoadViewer3D({ spec, placements, items, snapshot }: Load
   useEffect(() => {
     sceneRef.current?.setCargo(placements, items)
   }, [spec, placements, items])
+
+  // Occupied boxes incl. cushioning (ON/OFF toggle; on by default).
+  const [showCushion, setShowCushion] = useState(true)
+  const hasCushion = placements.some(
+    (p) => p.occupied.length !== p.length || p.occupied.width !== p.width || p.occupied.height !== p.height,
+  )
+  useEffect(() => {
+    sceneRef.current?.setCushion(placements, clearance)
+  }, [spec, placements, clearance])
+  useEffect(() => {
+    sceneRef.current?.setCushionVisible(showCushion)
+  }, [showCushion])
 
   const activeView = movedFor === spec.id ? null : view
 
@@ -723,6 +802,21 @@ export default function LoadViewer3D({ spec, placements, items, snapshot }: Load
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          aria-pressed={showCushion}
+          disabled={!hasCushion && clearance.wall === 0}
+          onClick={() => setShowCushion((v) => !v)}
+          title="緩衝材・隙間を含めた占有境界（黄色の半透明ボックスと破線）と、壁面クリアランスの内側（有効積載エリア）を表示"
+          className={cx(
+            'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ring-1 transition ring-inset disabled:cursor-not-allowed disabled:opacity-40',
+            focusRing,
+            showCushion ? 'bg-amber-50 text-amber-800 ring-amber-300' : 'bg-white text-slate-600 ring-slate-200 hover:bg-slate-50',
+          )}
+        >
+          <Layers size={14} />
+          緩衝材を表示 {showCushion ? 'ON' : 'OFF'}
+        </button>
         <button type="button" className={cx(btn.primary, 'ml-auto')} onClick={save} disabled={Boolean(error)}>
           <ImageDown size={16} />
           3D画像を保存
@@ -756,6 +850,13 @@ export default function LoadViewer3D({ spec, placements, items, snapshot }: Load
               奥から {formatMm(hovered.x)} mm ・ 床から {formatMm(hovered.z)} mm
               {hovered.rotated ? ' ・ 90°回転' : ''}
             </div>
+            {(hovered.occupied.length !== hovered.length || hovered.occupied.height !== hovered.height) && (
+              <div className="mt-0.5 text-amber-700 tabular-nums">
+                緩衝材込み {formatMm(hovered.occupied.length)} × {formatMm(hovered.occupied.width)} ×{' '}
+                {formatMm(hovered.occupied.height)} mm
+                {hoveredItem.margin > 0 ? `（個別 +${formatMm(hoveredItem.margin)} mm）` : ''}
+              </div>
+            )}
             {!hoveredItem.stackable && <div className="mt-0.5 font-medium text-rose-600">上積み厳禁（この上には積まない）</div>}
           </div>
         )}

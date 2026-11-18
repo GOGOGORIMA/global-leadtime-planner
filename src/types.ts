@@ -1,4 +1,4 @@
-import type { ContainerId } from './data/containers'
+import type { ContainerCategory, ContainerId } from './data/containers'
 import type { ISODate, OverrideKind, ScheduleMode } from './utils/dateCalc'
 
 /** Calendar id for steps counted in calendar days (every day is a working day). */
@@ -60,6 +60,20 @@ export interface CargoItem {
   rotatable: boolean
   /** Display color `#rrggbb`. */
   color: string
+  /** Extra cushioning needed around this cargo only (mm, on all four sides; 0 = none). */
+  margin: number
+}
+
+/** Cushioning / clearance of the loading simulator (one set per transport mode). */
+export interface CushionSettings {
+  /** 貨物間の緩衝材厚み: cushioning between neighbouring pieces (mm, 0–500). */
+  gap: number
+  /** 壁面・周囲クリアランス: clearance to the walls / front wall / door (mm, 0–500). */
+  wall: number
+  /** 上下段の間にも緩衝材を適用する. */
+  stack: boolean
+  /** Cushioning between stacked tiers (mm, 0–50), used when `stack` is on. */
+  stackGap: number
 }
 
 export interface PlannerState {
@@ -77,4 +91,6 @@ export interface PlannerState {
   container: ContainerId
   /** Loading simulator: cargo list. */
   cargo: CargoItem[]
+  /** Loading simulator: cushioning / clearance per transport mode. */
+  cushioning: Record<ContainerCategory, CushionSettings>
 }

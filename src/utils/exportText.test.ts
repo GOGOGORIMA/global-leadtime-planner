@@ -177,13 +177,15 @@ describe('Packing & Container Summary', () => {
     expect(section.trim().split('\n')).toEqual([
       'PACKING & CONTAINER SUMMARY',
       '- Packages: 31 pcs (3 types)',
-      '- Total volume: 15.5 m³',
+      '- Net cargo volume: 15.5 m³',
+      '- Gross occupied volume (incl. cushioning): 15.5 m³',
       '- Total gross weight: 3,160 kg',
       '- Largest package: 2,200 × 1,500 × 1,800 mm (Case #1 Main Unit (Crate))',
       '- Non-stackable: 1 pc (no top load)',
+      '- Cushioning / clearance: none',
       '- Recommended equipment (sea): 1 × 20ft Dry container',
       '- Recommended equipment (road): 1 × 4-ton truck (wide body)',
-      '- Loading plan (20ft Dry container): all 31 pcs fit – 46.7% of volume, 13.2% of max. payload',
+      '- Loading plan (20ft Dry container): all 31 pcs fit – 46.7% of volume (gross occupied), 13.2% of max. payload',
       'Package list:',
       '1. Case #1 Main Unit (Crate): 2,200 × 1,500 × 1,800 mm, 1,000 kg × 1 (non-stackable)',
       '2. Case #2 Accessories (Pallet): 1,100 × 1,100 × 1,000 mm, 300 kg × 6',
@@ -197,9 +199,37 @@ describe('Packing & Container Summary', () => {
     expect(text).toContain('*Packing summary*\n📦 31 pcs · 15.5 m³ · 3,160 kg\n🚢 Sea: 1 × 20ft Dry container\n🚚 Road: 1 × 4-ton truck (wide body)')
   })
 
+  it('shows net and gross volumes and the cushioning used', () => {
+    const cargo = instantiateCargo(SAMPLE_CARGO).map((c, i) => (i === 0 ? { ...c, margin: 100 } : c))
+    const cushioned = buildPackingSummary(cargo, getContainerSpec('4t'), {
+      sea: { gap: 0, wall: 0, stack: 0 },
+      truck: { gap: 50, wall: 30, stack: 20 },
+    })
+    const report = makeReport('backward', '2026-12-14')
+    const text = renderEmail(report, options({ includePacking: true }), undefined, cushioned)
+    expect(text).toContain('- Net cargo volume: 15.5 m³')
+    // crate (2,200 + 250) × (1,500 + 250) × (1,800 + 20) + 6 pallets 1,150² × 1,020 + 24 cartons 650 × 450 × 420
+    const gross = 2.45 * 1.75 * 1.82 + 6 * 1.15 * 1.15 * 1.02 + 24 * 0.65 * 0.45 * 0.42
+    expect(text).toContain(`- Gross occupied volume (incl. cushioning): ${gross.toFixed(1)} m³`)
+    expect(text).toContain('- Cushioning / clearance: 50 mm between packages, 30 mm to the walls, 20 mm between tiers')
+    // The container recommendation was planned without cushioning: no note. The truck one matches the plan.
+    expect(text).toContain('- Recommended equipment (sea): 1 × 20ft Dry container\n')
+    expect(text).toContain('1. Case #1 Main Unit (Crate): 2,200 × 1,500 × 1,800 mm, 1,000 kg × 1 (non-stackable, +100 mm cushioning)')
+    const chat = renderWhatsApp(report, options({ format: 'whatsapp', includePacking: true }), undefined, cushioned)
+    expect(chat).toContain(`📦 31 pcs · 15.5 m³ net / ${gross.toFixed(1)} m³ gross · 3,160 kg`)
+    // Selected container without cushioning: the truck recommendation mentions its own cushioning.
+    const sea = buildPackingSummary(cargo, getContainerSpec('20dc'), {
+      sea: { gap: 0, wall: 0, stack: 0 },
+      truck: { gap: 50, wall: 30, stack: 0 },
+    })
+    expect(renderEmail(report, options({ includePacking: true }), undefined, sea)).toContain(
+      '- Recommended equipment (road): 1 × 4-ton truck (wide body), allowing 50 mm between packages, 30 mm to the walls',
+    )
+  })
+
   it('explains when standard equipment cannot carry a package', () => {
     const tall = buildPackingSummary(
-      [{ id: 'x', name: 'Tall unit', length: 1200, width: 1000, height: 2600, weight: 900, quantity: 1, stackable: false, rotatable: true, color: '#6366f1' }],
+      [{ id: 'x', name: 'Tall unit', length: 1200, width: 1000, height: 2600, weight: 900, quantity: 1, stackable: false, rotatable: true, color: '#6366f1', margin: 0 }],
       getContainerSpec('40hc'),
     )
     const text = renderEmail(makeReport('backward', '2026-12-14'), options({ includePacking: true }), undefined, tall)

@@ -9,19 +9,23 @@ import {
   type ContainerSpec,
 } from '../data/containers'
 import type { PlannerAction } from '../state/plannerReducer'
-import type { CargoItem } from '../types'
+import type { CargoItem, CushionSettings } from '../types'
 import {
   MAX_PIECES,
   analyzePacking,
   fillLevel,
+  hasClearance,
   suggestForCategory,
+  toClearance,
   type CategorySuggestion,
+  type Clearance,
   type PackingResult,
   type UnitPlan,
 } from '../utils/binPacking'
 import type { ISODate } from '../utils/dateCalc'
 import { CargoList } from './CargoList'
 import { cx, focusRing } from './classes'
+import { CushioningPanel } from './CushioningPanel'
 import type { SnapshotInfo } from './LoadViewer3D'
 import { Card, Segmented } from './ui'
 
@@ -31,6 +35,7 @@ const LoadViewer3D = lazy(() => import('./LoadViewer3D'))
 interface VanningPanelProps {
   container: ContainerId
   cargo: readonly CargoItem[]
+  cushioning: Record<ContainerCategory, CushionSettings>
   dispatch: Dispatch<PlannerAction>
   today: ISODate
 }
@@ -45,6 +50,15 @@ const FILL_LABELS = { roomy: '余裕あり', good: '適正', full: 'ほぼ満載
 
 function dims(spec: ContainerSpec): string {
   return `${mm(spec.length)} × ${mm(spec.width)} × ${mm(spec.height)} mm`
+}
+
+/** `貨物間 50 mm・壁面 30 mm・上下段 20 mm` (or `なし`). */
+function clearanceJa(clearance: Clearance): string {
+  const parts: string[] = []
+  if (clearance.gap > 0) parts.push(`貨物間 ${mm(clearance.gap)} mm`)
+  if (clearance.wall > 0) parts.push(`壁面 ${mm(clearance.wall)} mm`)
+  if (clearance.stack > 0) parts.push(`上下段 ${mm(clearance.stack)} mm`)
+  return parts.length ? parts.join('・') : 'なし'
 }
 
 /** Shown when the lazy 3D chunk fails to load (offline, blocked). */
@@ -203,6 +217,58 @@ function Meter({ label, text, ratio, note, color }: { label: string; text: strin
   )
 }
 
+/** Volume meter: net cargo (solid) + cushioning / gaps (striped) = gross occupied volume. */
+function VolumeMeter({ result }: { result: PackingResult }) {
+  const { spec } = result
+  const net = Math.min(1, result.volumeRatio)
+  const gross = Math.min(1, result.grossVolumeRatio)
+  const cushion = result.loadedGrossVolume - result.loadedVolume
+  const partial = result.loadedPieces < result.totalPieces
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold text-slate-600">容積消化率（m³）</span>
+        <span className="text-lg font-bold text-slate-900 tabular-nums">{pct(result.grossVolumeRatio)}</span>
+      </div>
+      <div className="mt-0.5 text-xs text-slate-600 tabular-nums">
+        現在 {m3(result.loadedGrossVolume)} m³ / {spec.capacity} m³ ({pct(result.grossVolumeRatio)})
+        {cushion > 0.005 && <span className="text-slate-500">（緩衝材・隙間込み）</span>}
+      </div>
+      <div
+        className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-slate-100"
+        role="progressbar"
+        aria-label="容積消化率（実質占有）"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(gross * 100)}
+      >
+        <div className="stripes-dark absolute inset-y-0 left-0 rounded-full bg-indigo-300" style={{ width: `${gross * 100}%` }} />
+        <div className="absolute inset-y-0 left-0 rounded-full bg-indigo-500" style={{ width: `${net * 100}%` }} />
+      </div>
+      <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px] text-slate-600 tabular-nums">
+        <dt className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-sm bg-indigo-500" />
+          正味（Net Cargo Volume）
+        </dt>
+        <dd className="text-right font-semibold text-slate-800">{m3(result.loadedVolume)} m³</dd>
+        <dt className="flex items-center gap-1">
+          <span className="stripes-dark h-2 w-2 rounded-sm bg-indigo-300" />
+          実質占有（Gross Occupied Volume）
+        </dt>
+        <dd className="text-right font-semibold text-slate-800">
+          {m3(result.loadedGrossVolume)} m³
+          {cushion > 0.005 && <span className="font-normal text-amber-700">（+{m3(cushion)}）</span>}
+        </dd>
+      </dl>
+      {partial && (
+        <div className="mt-1 text-[11px] text-slate-500 tabular-nums">
+          全貨物：正味 {m3(result.totalVolume)} m³ ／ 実質占有 {m3(result.totalGrossVolume)} m³
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface Alert {
   tone: 'error' | 'warning' | 'ok'
   text: string
@@ -242,9 +308,19 @@ function buildAlerts(result: PackingResult, cargo: readonly CargoItem[], sea: Ca
     })
   }
   if (result.oversize.length) {
+    const wall = result.clearance.wall
+    const area =
+      wall > 0
+        ? `有効寸法（内寸 − 壁面クリアランス ${mm(wall)} mm × 2 = ${mm(result.usableLength)} × ${mm(result.usableWidth)} mm、高さ ${mm(spec.height)} mm）`
+        : `内寸（${dims(spec)}）`
     alerts.push({
       tone: 'error',
-      text: `荷室の内寸（${dims(spec)}）に収まらない貨物があります：${result.oversize.map((i) => `${cargo[i].name}（${mm(cargo[i].length)} × ${mm(cargo[i].width)} × ${mm(cargo[i].height)} mm）`).join('、')}`,
+      text: `荷室の${area}に収まらない貨物があります：${result.oversize
+        .map((i) => {
+          const c = cargo[i]
+          return `${c.name}（${mm(c.length)} × ${mm(c.width)} × ${mm(c.height)} mm${c.margin > 0 ? `、個別緩衝材 +${mm(c.margin)} mm` : ''}）`
+        })
+        .join('、')}`,
     })
   }
   if (result.overweight) {
@@ -262,19 +338,25 @@ function buildAlerts(result: PackingResult, cargo: readonly CargoItem[], sea: Ca
     })
   }
   if (!alerts.some((a) => a.tone === 'error') && result.loadedPieces === result.totalPieces - result.limitedPieces) {
+    const cushion = hasClearance(result.clearance) ? `（緩衝材 ${clearanceJa(result.clearance)} を確保）` : ''
+    const spare = Math.max(0, spec.length - result.clearance.wall - result.usedLength)
     alerts.push({
       tone: 'ok',
-      text: `すべての貨物（${result.loadedPieces.toLocaleString('en-US')} 個）を ${spec.label} に積載できます。奥（前壁）から ${mm(result.usedLength)} mm まで使用、ドア側に ${mm(spec.length - result.usedLength)} mm の余裕があります。`,
+      text: `すべての貨物（${result.loadedPieces.toLocaleString('en-US')} 個）を ${spec.label} に積載できます${cushion}。奥（前壁）から ${mm(result.usedLength)} mm まで使用、ドア側に ${mm(spare)} mm の余裕があります。`,
     })
   }
   return alerts
 }
 
-export function VanningPanel({ container, cargo, dispatch, today }: VanningPanelProps) {
+export function VanningPanel({ container, cargo, cushioning, dispatch, today }: VanningPanelProps) {
   const spec = getContainerSpec(container)
-  const result = useMemo(() => analyzePacking(spec, cargo), [spec, cargo])
-  const sea = useMemo(() => suggestForCategory(cargo, 'sea'), [cargo])
-  const truck = useMemo(() => suggestForCategory(cargo, 'truck'), [cargo])
+  // Each transport mode keeps its own cushioning (trucks: 50 mm between pieces / 30 mm to the walls).
+  const seaClearance = useMemo(() => toClearance(cushioning.sea), [cushioning.sea])
+  const truckClearance = useMemo(() => toClearance(cushioning.truck), [cushioning.truck])
+  const clearance = spec.category === 'sea' ? seaClearance : truckClearance
+  const result = useMemo(() => analyzePacking(spec, cargo, clearance), [spec, cargo, clearance])
+  const sea = useMemo(() => suggestForCategory(cargo, 'sea', seaClearance), [cargo, seaClearance])
+  const truck = useMemo(() => suggestForCategory(cargo, 'truck', truckClearance), [cargo, truckClearance])
   const alerts = useMemo(() => buildAlerts(result, cargo, sea, truck), [result, cargo, sea, truck])
   const hasCargo = cargo.length > 0
 
@@ -288,18 +370,19 @@ export function VanningPanel({ container, cargo, dispatch, today }: VanningPanel
   const snapshot: SnapshotInfo = useMemo(
     () => ({
       title: `${spec.nameJa}（${spec.label}）積載シミュレーション`,
-      subtitle: `内寸 ${dims(spec)} ・ ドア開口高 ${mm(spec.doorHeight)} mm ・ 最大積載 ${kg(spec.maxPayload)} kg ・ 容積 ${spec.capacity} m³`,
-      metrics: `積載 ${result.loadedPieces}/${result.totalPieces} 個 ・ 容積 ${m3(result.loadedVolume)} / ${spec.capacity} m³ (${pct(result.volumeRatio)}) ・ 重量 ${kg(result.loadedWeight)} / ${kg(spec.maxPayload)} kg (${pct(result.weightRatio)}) ・ 床面 ${pct(result.floorRatio)}`,
+      subtitle: `内寸 ${dims(spec)} ・ ドア開口高 ${mm(spec.doorHeight)} mm ・ 最大積載 ${kg(spec.maxPayload)} kg ・ 容積 ${spec.capacity} m³ ・ 緩衝材 ${clearanceJa(clearance)}`,
+      metrics: `積載 ${result.loadedPieces}/${result.totalPieces} 個 ・ 容積 正味 ${m3(result.loadedVolume)} m³／実質占有 ${m3(result.loadedGrossVolume)} m³ / ${spec.capacity} m³ (${pct(result.grossVolumeRatio)}) ・ 重量 ${kg(result.loadedWeight)} / ${kg(spec.maxPayload)} kg (${pct(result.weightRatio)}) ・ 床面 ${pct(result.floorRatio)}`,
       items: cargo.map((item, i) => ({
         color: item.color,
-        text: `${item.name}  ${mm(item.length)}×${mm(item.width)}×${mm(item.height)} mm ・ ${kg(item.weight)} kg × ${item.quantity}（積載 ${result.items[i]?.loaded ?? 0}/${item.quantity}）${item.stackable ? '' : ' ・ 上積み厳禁'}`,
+        text: `${item.name}  ${mm(item.length)}×${mm(item.width)}×${mm(item.height)} mm ・ ${kg(item.weight)} kg × ${item.quantity}（積載 ${result.items[i]?.loaded ?? 0}/${item.quantity}）${item.stackable ? '' : ' ・ 上積み厳禁'}${item.margin > 0 ? ` ・ 個別緩衝材 +${mm(item.margin)} mm` : ''}`,
       })),
       warnings: alerts.filter((a) => a.tone !== 'ok').map((a) => a.text),
       footer: `Global Lead-Time Planner ・ ${today} ・ 奥（前壁）からドアに向かって積み付け（自動計算の目安です。実際の積み付けは現場で確認してください）`,
       fileName: `vanning_${spec.id}_${today}.png`,
     }),
-    [spec, result, cargo, alerts, today],
+    [spec, result, cargo, alerts, today, clearance],
   )
+  const showsCushion = hasClearance(clearance) || cargo.some((item) => item.margin > 0)
 
   return (
     <div className="space-y-4">
@@ -362,19 +445,20 @@ export function VanningPanel({ container, cargo, dispatch, today }: VanningPanel
             <span>容積 {spec.capacity} m³</span>
           </p>
 
+          <CushioningPanel
+            category={spec.category}
+            spec={spec}
+            settings={cushioning[spec.category]}
+            dispatch={dispatch}
+          />
+
           <div className="grid gap-3 @3xl:grid-cols-2">
             <SuggestionCard suggestion={sea} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
             <SuggestionCard suggestion={truck} current={spec.id} hasCargo={hasCargo} onSelect={selectContainer} />
           </div>
 
           <div className="grid gap-3 @2xl:grid-cols-3">
-            <Meter
-              label="容積消化率（m³）"
-              text={`現在 ${m3(result.loadedVolume)} m³ / ${spec.capacity} m³ (${pct(result.volumeRatio)})`}
-              ratio={result.volumeRatio}
-              note={`貨物の総容積 ${m3(result.totalVolume)} m³`}
-              color="bg-indigo-500"
-            />
+            <VolumeMeter result={result} />
             <Meter
               label="重量消化率（kg）"
               text={`現在 ${kg(result.loadedWeight)} kg / ${kg(spec.maxPayload)} kg (${pct(result.weightRatio)})`}
@@ -384,9 +468,9 @@ export function VanningPanel({ container, cargo, dispatch, today }: VanningPanel
             />
             <Meter
               label="床面積占有率（%）"
-              text={`床面 ${result.floorArea.toFixed(1)} m² / ${result.containerFloorArea.toFixed(1)} m² (${pct(result.floorRatio)})`}
+              text={`床面 ${result.grossFloorArea.toFixed(1)} m² / ${result.containerFloorArea.toFixed(1)} m² (${pct(result.floorRatio)})`}
               ratio={result.floorRatio}
-              note={`奥から ${mm(result.usedLength)} mm まで使用（荷室長の ${pct0(result.usedLength / spec.length)}）`}
+              note={`${result.grossFloorArea - result.floorArea > 0.005 ? `緩衝材込み（貨物の底面のみ ${result.floorArea.toFixed(1)} m²）・` : ''}奥から ${mm(result.usedLength)} mm まで使用（荷室長の ${pct0(result.usedLength / spec.length)}）`}
               color="bg-teal-500"
             />
           </div>
@@ -424,12 +508,18 @@ export function VanningPanel({ container, cargo, dispatch, today }: VanningPanel
       <div className="@container">
         <div className="grid items-start gap-4 @3xl:grid-cols-[minmax(0,23rem)_minmax(0,1fr)]">
           <Card icon={<Package size={18} />} title="貨物リスト" subtitle="木箱・パレット・カートン（寸法は外寸 mm）">
-            <CargoList cargo={cargo} statuses={result.items} dispatch={dispatch} />
+            <CargoList cargo={cargo} statuses={result.items} clearance={clearance} dispatch={dispatch} />
           </Card>
           <Card icon={<Box size={18} />} title="3D 積載ビュー" subtitle={`${spec.nameJa}：奥（前壁）からドアに向かって積み付け`}>
             <ViewerBoundary>
               <Suspense fallback={<ViewerPlaceholder />}>
-                <LoadViewer3D spec={spec} placements={result.placements} items={cargo} snapshot={snapshot} />
+                <LoadViewer3D
+                  spec={spec}
+                  placements={result.placements}
+                  items={cargo}
+                  clearance={clearance}
+                  snapshot={snapshot}
+                />
               </Suspense>
             </ViewerBoundary>
             {hasCargo && (
@@ -447,6 +537,13 @@ export function VanningPanel({ container, cargo, dispatch, today }: VanningPanel
                     </li>
                   )
                 })}
+                {showsCushion && (
+                  <li className="flex items-center gap-1.5 text-amber-800">
+                    <span className="h-3 w-3 shrink-0 rounded-sm border border-dashed border-amber-600 bg-amber-200/60" />
+                    緩衝材を含めた占有境界（{clearanceJa(clearance)}
+                    {cargo.some((item) => item.margin > 0) ? '・個別緩衝材あり' : ''}）
+                  </li>
+                )}
               </ul>
             )}
           </Card>

@@ -15,15 +15,21 @@
  *   &tab=calendar                            ← open tab (meeting | schedule | calendar | export | vanning)
  *   &ct=20dc                                 ← loading simulator: container / truck (20dc 40dc 40hc 2t 4t 10t)
  *   &cg=1100x1100x1000_300_6_sr_f59e0b_Case+%232   ← cargo `{L}x{W}x{H}_{kg}_{qty}_{flags}_{color}_{name}`
- *                                               (flags: s = stackable, r = 90° turn allowed, - = none;
+ *                                               (flags: s = stackable, r = 90° turn allowed,
+ *                                                m100 = +100 mm own cushioning, - = none;
  *                                                `cg=-` = empty cargo list)
+ *   &cl=truck.50.30.20.h                     ← cushioning per mode `{sea|truck}.{gap}.{wall}.{tier mm}.{v|h}`
+ *                                               (v = also between tiers, h = horizontal only; only
+ *                                                written when it differs from the mode's default)
  */
-import { isContainerId } from '../data/containers'
+import { isContainerId, type ContainerCategory } from '../data/containers'
+import { DEFAULT_CUSHIONING } from '../state/defaults'
 import {
   CALENDAR_DAYS,
   isPlannerTab,
   type CargoItem,
   type CountrySettings,
+  type CushionSettings,
   type DayOverride,
   type PlannerState,
   type PlannerTab,
@@ -39,7 +45,8 @@ const STEP_CALENDAR_TOKEN = 'cal'
 const MAX_RANGE_DAYS = 400
 
 /** Keys that mark a query string as carrying planner state. */
-const STATE_KEYS = ['base', 'c', 's', 'd', 'mode', 'ct', 'cg']
+const STATE_KEYS = ['base', 'c', 's', 'd', 'mode', 'ct', 'cg', 'cl']
+const CUSHION_CATEGORIES: readonly ContainerCategory[] = ['sea', 'truck']
 const EMPTY_CARGO_TOKEN = '-'
 
 function hhmm(minutes: number): string {
@@ -90,13 +97,19 @@ export function serializeState(state: PlannerState): string {
   params.set('ct', state.container)
   if (state.cargo.length === 0) params.append('cg', EMPTY_CARGO_TOKEN)
   for (const item of state.cargo) params.append('cg', serializeCargo(item))
+  for (const category of CUSHION_CATEGORIES) {
+    const c = state.cushioning[category]
+    const d = DEFAULT_CUSHIONING[category]
+    if (c.gap === d.gap && c.wall === d.wall && c.stack === d.stack && c.stackGap === d.stackGap) continue
+    params.append('cl', `${category}.${c.gap}.${c.wall}.${c.stackGap}.${c.stack ? 'v' : 'h'}`)
+  }
   params.set('tab', state.tab)
   return params.toString()
 }
 
 /** `1100x1100x1000_300_6_sr_f59e0b_Case #2` (the name goes last so it may contain `_`). */
 function serializeCargo(item: CargoItem): string {
-  const flags = `${item.stackable ? 's' : ''}${item.rotatable ? 'r' : ''}` || '-'
+  const flags = `${item.stackable ? 's' : ''}${item.rotatable ? 'r' : ''}${item.margin > 0 ? `m${item.margin}` : ''}` || '-'
   const weight = String(Math.round(item.weight * 10) / 10)
   return `${item.length}x${item.width}x${item.height}_${weight}_${item.quantity}_${flags}_${item.color.replace('#', '')}_${item.name}`
 }
@@ -121,8 +134,19 @@ function parseCargo(value: string): Partial<CargoItem> | null {
     quantity: Number(quantity),
     stackable: flags.includes('s'),
     rotatable: flags.includes('r'),
+    margin: Number(/m(\d+)/.exec(flags)?.[1] ?? 0),
     color: /^[0-9a-f]{6}$/i.test(color) ? `#${color}` : '',
     name: rest,
+  }
+}
+
+/** `truck.50.30.20.h` → cushioning of one transport mode. */
+function parseCushion(value: string): { category: ContainerCategory; settings: Partial<CushionSettings> } | null {
+  const [category, gap, wall, stackGap, flag] = value.split('.')
+  if (category !== 'sea' && category !== 'truck') return null
+  return {
+    category,
+    settings: { gap: Number(gap), wall: Number(wall), stackGap: Number(stackGap), stack: flag === 'v' },
   }
 }
 
@@ -241,6 +265,15 @@ export function parseState(search: string, fallback: PlannerState): ParsedUrlSta
   const cargo = cargoValues.length
     ? cargoValues.map(parseCargo).filter((c): c is Partial<CargoItem> => c !== null)
     : fallback.cargo
+  // Modes without a `cl` parameter use their defaults (not the fallback's settings).
+  const cushioning: Record<ContainerCategory, CushionSettings> = {
+    sea: { ...DEFAULT_CUSHIONING.sea },
+    truck: { ...DEFAULT_CUSHIONING.truck },
+  }
+  for (const value of params.getAll('cl')) {
+    const parsed = parseCushion(value)
+    if (parsed) cushioning[parsed.category] = { ...cushioning[parsed.category], ...parsed.settings }
+  }
 
   const state = sanitizeState(
     {
@@ -254,6 +287,7 @@ export function parseState(search: string, fallback: PlannerState): ParsedUrlSta
       tab: readTabParam(search) ?? fallback.tab,
       container,
       cargo: cargo as CargoItem[],
+      cushioning,
     },
     fallback,
   )
