@@ -1,5 +1,5 @@
 import { AlertTriangle, Boxes, CalendarClock, Container, Info, Plane, RotateCcw, Sparkles } from 'lucide-react'
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 import { getCountryCatalog, getCountryInfo } from '../data/countries'
 import { CURRENCY_INFO, QUOTE_CURRENCIES, type QuoteCurrency } from '../data/currencies'
 import {
@@ -22,10 +22,10 @@ import {
   EXPORT_CHARGE_RATES,
   FREIGHT_ORIGIN,
   FREIGHT_REGION_LABELS,
-  type ExportChargeLine,
+  LCL_ORIGIN_PER_RT,
+  SURCHARGE_SHARE,
+  type FreightLane,
   type FreightMarket,
-  type RatedAmount,
-  type ShippingMode,
 } from '../utils/freightRates'
 import { TRUCK_CAPACITY } from '../utils/incotermsCalc'
 import type { CargoLink, QuoteResult, UnitChoice } from '../utils/quotation'
@@ -33,8 +33,20 @@ import { cx, focusRing, inputClass } from './classes'
 import { CountryFlag } from './CountryFlag'
 import { NumberField } from './NumberField'
 import { QuoteCargoBlock } from './QuoteCargoBlock'
-import { FieldLabel, Hint, MoneyField, RangeField, SectionHeader, UnitsPicker, YenField } from './quoteFormParts'
-import { kgText, percent, qty, recommendationLabel, recommendationReason, transportLabel, usd, yen } from './quoteStyles'
+import { FieldLabel, Hint, LoadWarning, MoneyField, RangeField, SectionHeader, UnitsPicker, YenField } from './quoteFormParts'
+import {
+  MARKET_LABELS,
+  kgText,
+  percent,
+  portLinesText,
+  qty,
+  rateText,
+  recommendationLabel,
+  recommendationReason,
+  transportLabel,
+  yen,
+  yenRange,
+} from './quoteStyles'
 import { Segmented } from './ui'
 
 interface QuoteSettingsFormProps {
@@ -46,6 +58,8 @@ interface QuoteSettingsFormProps {
   countries: readonly ResolvedCountry[]
   /** Destination used when `quote.destination` is '' (the schedule's partner country). */
   autoDestination: string
+  /** Port used when `quote.port` is '' (US: the coast of the partner's time zone). */
+  autoPort: string
   onChange: (patch: Partial<QuoteSettings>) => void
   onShowVanning: () => void
 }
@@ -74,47 +88,9 @@ const MARKETS: ReadonlyArray<{ value: FreightMarket; label: string; factor: stri
   },
 ]
 
-const EXPORT_LINE_LABELS: Readonly<Record<ExportChargeLine['key'], string>> = {
-  thc: 'THC',
-  vanning: 'バンニング',
-  seal: 'シール',
-  cfs: 'CFS・THC',
-  airHandling: '上屋・取扱・X線検査',
-  customs: '輸出通関料',
-  document: 'B/L・AWB 作成料',
-}
-
-const UNIT_TEXT: Readonly<Record<RatedAmount['unit'], (q: number) => string>> = {
-  container: (q) => `${q}本`,
-  rt: (q) => `${qty(q)} R/T`,
-  kg: (q) => `${kgText(Math.ceil(q))} kg`,
-}
-
 /** Label of the automatic choice of a container / truck. */
 function autoUnitsLabel(choice: UnitChoice): string {
   return choice.source === 'estimated' ? '概算M3から自動' : choice.source === 'default' ? '既定' : '積載3Dの計画'
-}
-
-/** `US$350 × 1本 × 1.0（通常期）`. */
-function rateText(rated: RatedAmount, factor?: { value: number; label: string }): string {
-  const core = rated.minimum
-    ? `最低料金 ${usd(rated.amount)}`
-    : `${rated.base ? `${usd(rated.base)} ＋ ` : ''}${usd(rated.rate)} × ${UNIT_TEXT[rated.unit](rated.quantity)}`
-  return factor ? `${core} × ${factor.value.toFixed(1)}（${factor.label}）` : core
-}
-
-function exportLinesText(lines: readonly ExportChargeLine[], mode: ShippingMode): string {
-  return lines
-    .map((line) => {
-      const label = EXPORT_LINE_LABELS[line.key]
-      if (line.key === 'airHandling') {
-        return `${label} ${line.rate}円 × ${UNIT_TEXT.kg(line.quantity)}（最低 ${yen(EXPORT_CHARGE_RATES.airMin)}）`
-      }
-      if (line.key === 'customs' || line.key === 'document') return `${label} ${yen(line.amount)}`
-      const unit = mode === 'lcl' ? UNIT_TEXT.rt(line.quantity) : UNIT_TEXT.container(line.quantity)
-      return `${label} ${yen(line.rate)} × ${unit}`
-    })
-    .join(' ＋ ')
 }
 
 function sortJa(codes: Iterable<string>): string[] {
@@ -158,11 +134,130 @@ function DestinationSelect({
   )
 }
 
+/** Port choice of destinations with several representative ports (US West / East Coast). */
+function PortChoice({ lane, value, autoPort, onChange }: { lane: FreightLane; value: string; autoPort: string; onChange: (port: string) => void }) {
+  const autoLabel = lane.ports.find((p) => p.id === autoPort)?.label ?? ''
+  const options = [
+    { id: '', label: `自動（${autoLabel}）`, note: '相手先の時間帯から' },
+    ...lane.ports.map((p) => ({ id: p.id, label: p.label, note: p.port })),
+  ]
+  return (
+    <div>
+      <span className="mb-1 block text-xs font-medium text-slate-600">仕向港（Port of Discharge）</span>
+      <div role="radiogroup" aria-label="仕向港" className="grid grid-cols-3 gap-1.5">
+        {options.map((option) => {
+          const active = option.id === value
+          return (
+            <button
+              key={option.id || 'auto'}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onChange(option.id)}
+              className={cx(
+                'min-w-0 rounded-lg border px-1.5 py-1.5 text-center transition',
+                focusRing,
+                active ? 'border-indigo-500 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-500' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+              )}
+            >
+              <span className="block text-[12px] leading-tight font-semibold">{option.label}</span>
+              <span className="mt-0.5 block text-[10px] leading-tight text-slate-500">{option.note}</span>
+            </button>
+          )
+        })}
+      </div>
+      <Hint>米国は東海岸（New York / Savannah）向けが西海岸より高くなります。自動では相手先の時間帯が太平洋・山岳部時間なら西海岸、それ以外は東海岸を使います。</Hint>
+    </div>
+  )
+}
+
+/** Table rates of the destination (normal market, JPY) next to the planning band of the trade. */
+function LaneRateTable({ result }: { result: QuoteResult }) {
+  const lane = result.lane
+  const rows: ReadonlyArray<{ key: string; label: string; table: ReactNode; band: string; active: boolean }> = [
+    {
+      key: '20',
+      label: '20ft',
+      table: yen(lane.fcl20),
+      band: yenRange(lane.band.fcl20),
+      active: result.mode === 'fcl' && result.container.spec.id === '20dc',
+    },
+    {
+      key: '40',
+      label: '40ft / HQ',
+      table: `${yen(lane.fcl40)} / ${yen(lane.fcl40hc)}`,
+      band: yenRange(lane.band.fcl40),
+      active: result.mode === 'fcl' && result.container.spec.id !== '20dc',
+    },
+    {
+      key: 'lcl',
+      label: 'LCL /R/T',
+      table: (
+        <>
+          {yen(lane.lcl + LCL_ORIGIN_PER_RT)}
+          <span className="block text-[10px] font-normal text-slate-500">
+            運賃 {yen(lane.lcl)} ＋ CFS・THC {yen(LCL_ORIGIN_PER_RT)}
+          </span>
+        </>
+      ),
+      band: yenRange(lane.band.lcl),
+      active: result.mode === 'lcl',
+    },
+    { key: 'air', label: 'Air /kg', table: yen(lane.air), band: yenRange(lane.band.air), active: result.mode === 'air' },
+  ]
+  return (
+    <table className="mt-1.5 w-full text-left text-[11px] tabular-nums" aria-label="仕向地の運賃テーブルと目安レンジ">
+      <thead>
+        <tr className="text-[10px] text-slate-500">
+          <th scope="col" className="py-0.5 pr-2 font-medium">
+            通常期
+          </th>
+          <th scope="col" className="py-0.5 pr-2 font-medium">
+            テーブル運賃（サーチャージ込）
+          </th>
+          <th scope="col" className="py-0.5 font-medium">
+            目安レンジ
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.key} className={cx('border-t border-slate-100 align-top', row.active && 'bg-indigo-50/70 font-semibold text-indigo-950')}>
+            <th scope="row" className="py-1 pr-2 font-medium whitespace-nowrap">
+              {row.label}
+            </th>
+            <td className="py-1 pr-2">{row.table}</td>
+            <td className="py-1 text-slate-600">{row.band}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/** "Entered by hand" note with a reset button (insurance premium, duty). */
+function ManualNote({ children, onReset }: { children: ReactNode; onReset: () => void }) {
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md bg-amber-50 px-2 py-1 text-[11px] text-amber-900 ring-1 ring-amber-200">
+      <span className="min-w-0 flex-1">{children}</span>
+      <button
+        type="button"
+        onClick={onReset}
+        className={cx('inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-medium whitespace-nowrap text-indigo-700 hover:bg-indigo-50', focusRing)}
+      >
+        <RotateCcw size={11} />
+        自動に戻す
+      </button>
+    </p>
+  )
+}
+
 /**
  * Left column: ① estimated volume & weight, ② base price, currency and export packing,
- * ③ domestic trucks and export charges, ④ international freight, ⑤ destination charges, duty, validity.
+ * ③ domestic truck, export customs and port charges, ④ international freight and insurance,
+ * ⑤ destination charges, duty, validity.
  */
-export function QuoteSettingsForm({ quote, result, link, countries, autoDestination, onChange, onShowVanning }: QuoteSettingsFormProps) {
+export function QuoteSettingsForm({ quote, result, link, countries, autoDestination, autoPort, onChange, onShowVanning }: QuoteSettingsFormProps) {
   const ids = {
     exw: useId(),
     currency: useId(),
@@ -182,12 +277,15 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
   const market = MARKETS.find((m) => m.value === quote.market) ?? MARKETS[0]
   const peakish = quote.market !== 'normal'
   const r = result.incoterms
+  const surchargePercent = Math.round(SURCHARGE_SHARE * 100)
 
   return (
     <section aria-label="概算M3・基準価格・物流条件の設定パネル" className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <header className="border-b border-slate-100 px-4 py-3">
         <h2 className="text-base font-semibold text-slate-900">1. 概算M3・基準価格・物流条件の設定</h2>
-        <p className="mt-0.5 text-xs text-slate-500">概算M3と重量から、梱包費・トラック運賃・港湾諸掛・国際運賃を自動で見積もります（金額はすべて手動で調整可能）。</p>
+        <p className="mt-0.5 text-xs text-slate-500">
+          梱包後の概算M3と重量から、梱包費・トラック運賃・通関料・港湾諸掛・国際運賃・サーチャージを自動で見積もります（金額はすべて手動で調整可能）。
+        </p>
       </header>
 
       <div className="divide-y divide-slate-100">
@@ -196,10 +294,10 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
 
         {/* 2. Base price, currency, FX and export packing */}
         <div className="space-y-3 p-4">
-          <SectionHeader n={2} title="基準価格と通貨・為替設定" />
+          <SectionHeader n={2} title="基準価格と通貨・為替設定" note="EXW" />
           <div>
             <FieldLabel htmlFor={ids.exw}>
-              {quote.packingCost ? 'EXW 基準価格（工場出荷価格・輸出梱包費別）' : 'EXW 基準価格（梱包込の工場出荷価格）'}
+              {quote.packingCost ? 'EXW 基準価格（製品ベース・輸出梱包費別）' : 'EXW 基準価格（製品ベース・梱包込）'}
             </FieldLabel>
             <NumberField
               id={ids.exw}
@@ -226,30 +324,38 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
                 <span className="block text-sm font-medium text-slate-800">
                   輸出木箱・パレット梱包費を <span className="inline-block">M3 単価で自動算入する</span>
                 </span>
-                <span className="block text-[11px] text-slate-500">EXW に「概算M3 × 梱包単価」を加算します。</span>
+                <span className="block text-[11px] text-slate-500">EXW に「梱包後概算M3 × 梱包単価」を加算します。</span>
               </span>
             </label>
             {quote.packingCost && (
-              <div className="mt-2 grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] items-center gap-2">
-                <NumberField
-                  id={ids.packingRate}
-                  value={quote.packingRate}
-                  onChange={(packingRate) => onChange({ packingRate })}
-                  min={0}
-                  max={MAX_PACKING_RATE}
-                  step={500}
-                  ariaLabel="梱包単価（円 / m³）"
-                  suffix="円/m³"
-                />
-                <span className="text-xs text-slate-600 tabular-nums">
-                  × {qty(result.volume)} m³ ＝ <span className="font-bold text-slate-900">{yen(r.packing)}</span>
-                </span>
+              <div className="mt-2 space-y-2">
+                <div className="grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)] items-center gap-2">
+                  <NumberField
+                    id={ids.packingRate}
+                    value={quote.packingRate}
+                    onChange={(packingRate) => onChange({ packingRate })}
+                    min={0}
+                    max={MAX_PACKING_RATE}
+                    step={500}
+                    ariaLabel="梱包単価（円 / m³）"
+                    suffix="円/m³"
+                  />
+                  <span className="text-xs text-slate-600 tabular-nums">
+                    × {qty(result.volume)} m³ ＝ <span className="font-bold text-slate-900">{yen(result.packing.auto)}</span>
+                  </span>
+                </div>
+                <YenField
+                  label="輸出梱包費（梱包業者の見積で上書き可）"
+                  value={quote.packingAmount}
+                  auto={result.packing.auto}
+                  onChange={(packingAmount) => onChange({ packingAmount })}
+                  autoLabel="M3 × 単価"
+                >
+                  <Hint>
+                    EXW 価格 ＝ 製品ベース {yen(r.base)} ＋ 輸出梱包費 {yen(r.packing)} ＝ {yen(r.exw)}
+                  </Hint>
+                </YenField>
               </div>
-            )}
-            {quote.packingCost && (
-              <Hint>
-                EXW 価格 ＝ 基準価格 {yen(r.base)} ＋ 輸出梱包費 {yen(r.packing)} ＝ {yen(r.exw)}
-              </Hint>
             )}
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -311,7 +417,7 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
           )}
           {quote.currency !== 'USD' && (
             <div>
-              <FieldLabel htmlFor={ids.usd}>USD 換算レート（USD 建て運賃・現地諸掛の円換算用）</FieldLabel>
+              <FieldLabel htmlFor={ids.usd}>USD 換算レート（USD で入力した運賃・諸掛の円換算用）</FieldLabel>
               <NumberField
                 id={ids.usd}
                 value={quote.usdRate}
@@ -326,51 +432,57 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
           )}
         </div>
 
-        {/* 3. Domestic trucks and export charges */}
+        {/* 3. Domestic truck, export customs and port charges */}
         <div className="space-y-3 p-4">
-          <SectionHeader n={3} title="国内物流・輸出諸掛" note="FOB 加算分" />
-          <UnitsPicker
-            label="国内トラック（工場〜輸出港）"
-            category="truck"
-            value={quote.truck}
-            auto={result.truck}
-            autoLabel={autoUnitsLabel(result.truck)}
-            onChange={(truck) => onChange({ truck })}
-          />
-          <Hint>
-            目安：{TRUCK_CAPACITY.map((t) => `${t.id} 〜${t.volume} m³・${kgText(t.weight / 1000)} t`).join(' ／ ')}。超える場合は 10t 車を複数台。
-            {result.truck.unavailable && ' 標準トラックに収まらない貨物があります（特殊車両の運賃を入力してください）。'}
-          </Hint>
-          <YenField
-            label="国内トラック運賃"
-            value={quote.domestic}
-            auto={result.domestic.auto}
-            onChange={(domestic) => onChange({ domestic })}
-          >
+          <SectionHeader n={3} title="国内・港湾諸掛" note="FOB 加算分" />
+          <div>
+            <UnitsPicker
+              label="国内トラック（工場〜輸出港）"
+              category="truck"
+              value={quote.truck}
+              auto={result.truck}
+              autoLabel={autoUnitsLabel(result.truck)}
+              onChange={(truck) => onChange({ truck })}
+            />
+            <LoadWarning check={result.loads.truck} choice={result.truck} volume={result.volume} weight={result.weight} />
+            <Hint>
+              目安：{TRUCK_CAPACITY.map((t) => `${t.id} 〜${t.volume} m³・${kgText(t.weight / 1000)} t`).join(' ／ ')}（梱包後の重量で判定）。超える場合は 10t 車を複数台。
+              {result.truck.unavailable && ' 標準トラックに収まらない貨物があります（特殊車両の運賃を入力してください）。'}
+            </Hint>
+          </div>
+          <YenField label="国内トラック運賃" value={quote.domestic} auto={result.domestic.auto} onChange={(domestic) => onChange({ domestic })}>
             <Hint>
               目安：{result.truck.spec.label} {yen(DOMESTIC_TRUCK_RATES[result.truck.spec.id] ?? 0)} × {result.truck.units}台 ＝ {yen(result.domestic.auto)}
             </Hint>
           </YenField>
+          <YenField label="輸出通関料" value={quote.customs} auto={result.customs.auto} onChange={(customs) => onChange({ customs })}>
+            <Hint>輸出申告 1 件 {yen(EXPORT_CHARGE_RATES.customs)}（通関業者の基本料金の目安。品目数が多い・他法令の確認がある場合は加算）</Hint>
+          </YenField>
           <YenField
-            label="輸出通関・港湾諸掛（THC / CFS / B/L / バンニング）"
-            value={quote.exportCharges}
-            auto={result.exportCharges.auto}
-            onChange={(exportCharges) => onChange({ exportCharges })}
+            label="輸出港湾諸掛（THC・CFS・B/L・バンニング等）"
+            value={quote.portCharges}
+            auto={result.portCharges.auto}
+            onChange={(portCharges) => onChange({ portCharges })}
           >
             <Hint>
-              目安（{result.mode === 'lcl' ? 'LCL：R/T × CFS 単価 ＋ 基本料' : result.mode === 'fcl' ? 'FCL：本数 × THC・バンニング ＋ 基本料' : 'Air'}）：
-              {exportLinesText(result.exportCharges.lines, result.mode)} ＝ {yen(result.exportCharges.auto)}
+              目安（{result.mode === 'lcl' ? 'LCL：R/T 連動' : result.mode === 'fcl' ? 'FCL：コンテナ本数連動' : 'Air：課金重量連動'}）：
+              {portLinesText(result.portCharges.lines, result.mode)} ＝ {yen(result.portCharges.auto)}
             </Hint>
           </YenField>
-          <div className="flex items-baseline justify-between rounded-lg bg-slate-50 px-3 py-2 text-xs">
-            <span className="font-medium text-slate-600">FOB 諸掛 合計</span>
-            <span className="font-bold text-slate-900 tabular-nums">{yen(r.fobCharges)}</span>
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
+            <div className="flex items-baseline justify-between">
+              <span className="font-medium text-slate-600">国内・港湾諸掛 合計（FOB − EXW）</span>
+              <span className="font-bold text-slate-900 tabular-nums">{yen(r.fobCharges)}</span>
+            </div>
+            <p className="mt-0.5 text-[11px] text-slate-500 tabular-nums">
+              トラック {yen(r.domestic)} ＋ 通関 {yen(r.customs)} ＋ 港湾 {yen(r.portCharges)}
+            </p>
           </div>
         </div>
 
-        {/* 4. International freight */}
+        {/* 4. International freight and insurance */}
         <div className="space-y-3 p-4">
-          <SectionHeader n={4} title="変動する国際輸送費" note="CFR・CIF 加算分" />
+          <SectionHeader n={4} title="国際運賃・サーチャージ・保険" note="CFR・CIF 加算分" />
           <div>
             <span className="mb-1 block text-xs font-medium text-slate-600">輸送モード</span>
             <Segmented
@@ -395,7 +507,7 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
           {result.fclSuggestion && (
             <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
               <span className="min-w-0 flex-1">
-                {result.fclSuggestion.container.spec.label} × {result.fclSuggestion.container.units} の FCL の方が割安です（運賃＋港湾諸掛{' '}
+                {result.fclSuggestion.container.spec.label} × {result.fclSuggestion.container.units} の FCL の方が割安です（運賃＋港湾・現地諸掛{' '}
                 {yen(result.fclSuggestion.fclTotal)} ＜ LCL {yen(result.fclSuggestion.lclTotal)}）。
               </span>
               <button
@@ -408,14 +520,17 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
             </div>
           )}
           {result.mode === 'fcl' && (
-            <UnitsPicker
-              label="FCL コンテナ"
-              category="sea"
-              value={quote.container}
-              auto={result.container}
-              autoLabel={autoUnitsLabel(result.recommended.container)}
-              onChange={(container) => onChange({ container })}
-            />
+            <div>
+              <UnitsPicker
+                label="FCL コンテナ"
+                category="sea"
+                value={quote.container}
+                auto={result.container}
+                autoLabel={autoUnitsLabel(result.recommended.container)}
+                onChange={(container) => onChange({ container })}
+              />
+              <LoadWarning check={result.loads.container} choice={result.container} volume={result.volume} weight={result.weight} />
+            </div>
           )}
           <div>
             <FieldLabel htmlFor={ids.destination}>仕向地（対象国）</FieldLabel>
@@ -429,12 +544,13 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
             />
             <Hint>
               {lane.estimated
-                ? `専用の運賃データがないため、${FREIGHT_REGION_LABELS[lane.region]}の目安運賃を使用しています。`
+                ? `専用の運賃データがないため、${FREIGHT_REGION_LABELS[lane.region]}の目安運賃（主要港より高め）を使用しています。`
                 : `代表港：${lane.port}（${FREIGHT_REGION_LABELS[lane.region]}）。`}
-              通常期：20ft {usd(lane.fcl20)} ／ 40ft {usd(lane.fcl40)} ／ 40ft HQ {usd(lane.fcl40hc)} ／ LCL {usd(lane.lcl)}/R/T ／ Air{' '}
-              {usd(lane.air, 2)}/kg
+              運賃はサーチャージ込、THC・CFS・B/L 等の港湾諸掛は ③ に別途加算します。
             </Hint>
+            <LaneRateTable result={result} />
           </div>
+          {lane.ports.length > 0 && <PortChoice lane={lane} value={quote.port} autoPort={autoPort} onChange={(port) => onChange({ port })} />}
           <div>
             <span className="mb-1 block text-xs font-medium text-slate-600">市況モード</span>
             <div role="radiogroup" aria-label="市況モード" className="grid grid-cols-3 gap-1.5">
@@ -461,21 +577,35 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
               })}
             </div>
           </div>
-          <MoneyField
-            label={`${freightName}（Freight Override で上書き可）`}
-            value={quote.freight}
-            autoUsd={result.freight.autoUsd}
-            autoJpy={result.freight.autoJpy}
-            usdRate={result.usdRate}
-            onChange={(freight) => onChange({ freight })}
-            autoLabel="テーブル運賃"
-          >
-            <Hint>
-              {quote.freight
-                ? `フォワーダーの実見積などを手動で入力中（市況係数は掛かりません）。テーブル運賃：${usd(result.freight.autoUsd)} ≒ ${yen(result.freight.autoJpy)}`
-                : `テーブル運賃：${rateText(result.freight.basis, { value: result.marketFactor, label: market.label })} = ${usd(result.freight.autoUsd)} ≒ ${yen(result.freight.autoJpy)}（1 USD = ${result.usdRate.toFixed(2)} 円）`}
-            </Hint>
-          </MoneyField>
+          <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+            <p className="text-[11px] leading-relaxed text-slate-600 tabular-nums">
+              テーブル運賃：{rateText(result.freight.table, { value: result.marketFactor, label: MARKET_LABELS[quote.market] })} ＝{' '}
+              <span className="font-semibold text-slate-900">{yen(result.freight.tableJpy)}</span>（うち基本運賃 {100 - surchargePercent}%・サーチャージ{' '}
+              {surchargePercent}% として内訳を表示）
+            </p>
+            <MoneyField
+              label={`基本運賃（${result.mode === 'air' ? 'A/F' : 'O/F'}）`}
+              value={quote.freight}
+              auto={result.freight.base.auto}
+              usdRate={result.usdRate}
+              onChange={(freight) => onChange({ freight })}
+              autoLabel="テーブル運賃"
+            />
+            <MoneyField
+              label={result.mode === 'air' ? 'サーチャージ（燃油 FSC・保安 SSC 等）' : 'サーチャージ（BAF / LSS / EBS 等）'}
+              value={quote.surcharge}
+              auto={result.freight.surcharge.auto}
+              usdRate={result.usdRate}
+              onChange={(surcharge) => onChange({ surcharge })}
+              autoLabel="テーブル運賃"
+            >
+              <Hint>
+                {quote.freight || quote.surcharge
+                  ? 'フォワーダーの見積を手動で入力中です（手動の金額には市況係数を掛けません）。'
+                  : `フォワーダーの見積（${freightName}・サーチャージ）があれば、それぞれ上書きしてください。`}
+              </Hint>
+            </MoneyField>
+          </div>
           <RangeField
             label="運賃変動バッファ（Freight Contingency）"
             value={quote.freightBuffer}
@@ -486,7 +616,8 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
             display={`+${quote.freightBuffer.toFixed(0)}%`}
           >
             <Hint>
-              実勢・上書き運賃 {yen(r.freightBase)} ＋ バッファ {yen(r.freightContingency)} ＝ {yen(r.freight)}
+              （基本運賃 {yen(r.baseFreight)} ＋ サーチャージ {yen(r.surcharge)}）× {percent(result.freightBuffer)} ＝ バッファ {yen(r.freightContingency)} → 国際運賃・サーチャージ計{' '}
+              {yen(r.freight)}
             </Hint>
           </RangeField>
           <div>
@@ -501,26 +632,31 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
               ariaLabel="保険料率（%）"
               suffix="%"
             />
-            <Hint>
-              CIF 価格の 110%（{yen(r.insuredValue)}）に付保 → 保険料 {yen(r.insurance)}
-            </Hint>
+            {result.insurance.manual ? (
+              <ManualNote onReset={() => onChange({ insurance: null })}>
+                保険料は積算内訳で手動入力中：{yen(r.insurance)}（料率から計算すると {yen(result.insurance.auto)}）
+              </ManualNote>
+            ) : (
+              <Hint>
+                CIF 価格の 110%（{yen(r.insuredValue)}）× {percent(quote.insuranceRate)} ＝ 保険料 {yen(r.insurance)}
+              </Hint>
+            )}
           </div>
         </div>
 
         {/* 5. Destination charges, duty, validity */}
         <div className="space-y-3 p-4">
-          <SectionHeader n={5} title="現地輸入諸掛・関税" note="DAP / DDP 加算分" />
+          <SectionHeader n={5} title="現地諸掛・関税" note="DAP / DDP 加算分" />
           <MoneyField
             label="現地港湾・輸入通関・現地配送費（DAP費用）"
             value={quote.local}
-            autoUsd={result.local.autoUsd}
-            autoJpy={result.local.autoJpy}
+            auto={result.local.auto}
             usdRate={result.usdRate}
             onChange={(local) => onChange({ local })}
             autoLabel="プリセット"
           >
             <Hint>
-              プリセット（{FREIGHT_REGION_LABELS[lane.region]}）：{rateText(result.local.basis)} = {usd(result.local.autoUsd)} ≒ {yen(result.local.autoJpy)}
+              プリセット（{FREIGHT_REGION_LABELS[lane.region]}）：{rateText(result.local.basis)} ＝ {yen(result.local.auto)}
             </Hint>
           </MoneyField>
           <div>
@@ -555,9 +691,15 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
                 ))}
               </div>
             </div>
-            <Hint>
-              CIF 価格 {yen(r.cif)} × {percent(quote.dutyRate)} ＝ 関税 {yen(r.duty)}（輸入 VAT / GST は含みません）
-            </Hint>
+            {result.duty.manual ? (
+              <ManualNote onReset={() => onChange({ duty: null })}>
+                関税は積算内訳で手動入力中：{yen(r.duty)}（税率から計算すると {yen(result.duty.auto)}）
+              </ManualNote>
+            ) : (
+              <Hint>
+                CIF 価格 {yen(r.cif)} × {percent(quote.dutyRate)} ＝ 関税 {yen(r.duty)}（輸入 VAT / GST は含みません）
+              </Hint>
+            )}
           </div>
           <div>
             <FieldLabel
@@ -617,7 +759,7 @@ export function QuoteSettingsForm({ quote, result, link, countries, autoDestinat
         </div>
       </div>
       <p className="border-t border-slate-100 px-4 py-2.5 text-[10px] leading-relaxed text-slate-400">
-        運賃・諸掛・梱包単価の初期値は日本の主要港・空港発の目安（通常期の概算）です。実際の金額はフォワーダー・通関業者・梱包業者の見積で確認し、各欄を上書きしてください。
+        運賃・諸掛・梱包単価の初期値は日本の主要港・空港発の目安（通常期・円建て）です。実際の金額はフォワーダー・通関業者・梱包業者の見積で確認し、各欄を上書きしてください。
         提示価格はすべて {unitJa} 建てで表示します。
       </p>
     </section>

@@ -188,7 +188,7 @@ const QUOTED_TERMS = ['EXW', 'FOB', 'CIF', 'DDP'] as const
 
 /** `CIF Laem Chabang, Thailand` etc. (Incoterms® 2020 named places). */
 function namedPlace(term: (typeof QUOTED_TERMS)[number], q: QuotationText): string {
-  const isAir = q.quote.freight.basis.unit === 'kg'
+  const isAir = q.quote.mode === 'air'
   const name = q.destinationName
   switch (term) {
     case 'EXW':
@@ -212,12 +212,12 @@ const TERM_NAMES_EN = {
 
 /** `Sea freight (FCL), 1 × 20ft Dry container` / `Sea freight (LCL), 7.26 R/T (W/M)` / `Air freight, chargeable weight 1,800 kg`. */
 function transportText(q: QuoteResult): string {
-  switch (q.freight.basis.unit) {
-    case 'container':
+  switch (q.mode) {
+    case 'fcl':
       return `Sea freight (FCL), ${q.container.units} × ${q.container.spec.nameEn}`
-    case 'rt':
+    case 'lcl':
       return `Sea freight (LCL), ${q.chargedRevenueTons.toFixed(2)} R/T (W/M)`
-    case 'kg':
+    case 'air':
       return `Air freight, chargeable weight ${formatKg(Math.ceil(q.chargeableKg))} kg`
   }
 }
@@ -289,7 +289,7 @@ export function renderQuotationEmail(options: ExportOptions, q: QuotationText, r
   lines.push('')
   lines.push('SHIPMENT BASIS')
   lines.push(`- Transport: ${transportText(quote)}, Japan → ${q.destinationName}`)
-  if (quote.freight.basis.unit === 'kg') lines.push('- For air freight, FOB / CIF correspond to FCA / CIP (Incoterms® 2020).')
+  if (quote.mode === 'air') lines.push('- For air freight, FOB / CIF correspond to FCA / CIP (Incoterms® 2020).')
   lines.push(`- ${volumeText(quote)}`)
   if (quote.incoterms.packing > 0) lines.push('- Export packing (crates / pallets) is included in the EXW price')
   const rate = exchangeRateText(quote)
@@ -322,11 +322,11 @@ export function renderQuotationEmail(options: ExportOptions, q: QuotationText, r
 /** Short quotation block for WhatsApp / chat. */
 function renderQuotationChat(q: QuotationText, style: EnglishDateStyle): string[] {
   const { quote } = q
-  const icon = quote.freight.basis.unit === 'kg' ? '✈️' : '🚢'
+  const icon = quote.mode === 'air' ? '✈️' : '🚢'
   const mode =
-    quote.freight.basis.unit === 'container'
+    quote.mode === 'fcl'
       ? `FCL ${quote.container.units} × ${quote.container.spec.label}`
-      : quote.freight.basis.unit === 'rt'
+      : quote.mode === 'lcl'
         ? `LCL ${quote.chargedRevenueTons.toFixed(2)} R/T`
         : `Air ${formatKg(Math.ceil(quote.chargeableKg))} kg chargeable`
   return [

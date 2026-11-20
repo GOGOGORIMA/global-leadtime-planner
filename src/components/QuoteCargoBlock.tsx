@@ -1,12 +1,29 @@
 import { AlertTriangle, ArrowRight, Container, PencilLine, Plus, Ruler, Trash2, type LucideIcon } from 'lucide-react'
-import { MAX_CARGO_QUANTITY, MAX_CARGO_WEIGHT, MAX_QUOTE_ROWS, MAX_QUOTE_VOLUME, MAX_QUOTE_WEIGHT } from '../state/defaults'
+import { useId, useState } from 'react'
+import {
+  MAX_CARGO_QUANTITY,
+  MAX_CARGO_WEIGHT,
+  MAX_PACKING_WEIGHT_KG,
+  MAX_PACKING_WEIGHT_PERCENT,
+  MAX_QUOTE_ROWS,
+  MAX_QUOTE_VOLUME,
+  MAX_QUOTE_WEIGHT,
+} from '../state/defaults'
 import type { QuoteCargoMode, QuoteSettings } from '../types'
-import { rowVolume, type PackingAllowance, type SizeRow, type SizeUnit } from '../utils/incotermsCalc'
+import {
+  CRATE_KG_PER_ADDED_M3,
+  PACKING_WEIGHT_PERCENT,
+  rowVolume,
+  type PackingAllowance,
+  type PackingWeightSetting,
+  type SizeRow,
+  type SizeUnit,
+} from '../utils/incotermsCalc'
 import type { CargoLink, QuoteResult } from '../utils/quotation'
 import { btn, cx, focusRing } from './classes'
 import { NumberField } from './NumberField'
-import { Hint, MiniToggle, RangeField, SectionHeader } from './quoteFormParts'
-import { kgText, qty, recommendationLabel, recommendationReason } from './quoteStyles'
+import { AutoState, FieldLabel, Hint, MiniToggle, RangeField, SectionHeader } from './quoteFormParts'
+import { kgText, percent, qty, recommendationLabel, recommendationReason } from './quoteStyles'
 
 interface QuoteCargoBlockProps {
   quote: QuoteSettings
@@ -23,16 +40,89 @@ const MODES: ReadonlyArray<{ value: QuoteCargoMode; label: string; note: string;
   { value: 'vanning', label: '積載3Dから引用', note: 'タブ⑤の結果を使う', icon: Container },
 ]
 
-const ALLOWANCES: ReadonlyArray<{ value: PackingAllowance; label: string; note: string }> = [
-  { value: 'none', label: 'そのまま', note: '梱包済寸法 1.0x' },
-  { value: 'carton', label: '段ボール・パレット梱包', note: '+15% / 1.15x' },
-  { value: 'crate', label: '輸出密閉木箱・スキッド梱包', note: '+25% / 1.25x' },
+const ALLOWANCES: ReadonlyArray<{ value: PackingAllowance; label: string; note: string; weight: string }> = [
+  { value: 'none', label: 'そのまま', note: '梱包済寸法 1.0x', weight: '重量 +0%' },
+  { value: 'carton', label: '段ボール・パレット梱包', note: '容積 +15% / 1.15x', weight: '重量 +8%' },
+  { value: 'crate', label: '輸出密閉木箱・スキッド梱包', note: '容積 +25% / 1.25x', weight: '重量 +15%〜' },
 ]
 
 const UNITS = [
   { value: 'cm' as const, label: 'cm' },
   { value: 'mm' as const, label: 'mm' },
 ]
+
+const WEIGHT_UNITS = [
+  { value: 'pct' as const, label: '%' },
+  { value: 'kg' as const, label: 'kg' },
+]
+
+const round1 = (n: number) => Math.round(n * 10) / 10
+const kg = (n: number) => kgText(Math.round(n))
+
+/** How the packing weight was found (hint under the field). */
+function packingWeightHint(quote: QuoteSettings, result: QuoteResult): string {
+  const c = result.cargo
+  const label = ALLOWANCES.find((a) => a.value === quote.allowance)?.label ?? ''
+  switch (c.packingRule) {
+    case 'none':
+      return `梱包済みの寸法として重量は加算しません（自動：段ボール・パレット +${PACKING_WEIGHT_PERCENT.carton}% ／ 木箱・スキッド +${PACKING_WEIGHT_PERCENT.crate}%）。`
+    case 'percent':
+      return `${label}：基準重量 ${kg(c.baseWeight)} kg × ${c.packingPercent}% ＝ ${kg(c.packingKg)} kg（${
+        quote.allowance === 'crate' ? '木材・補強桟木・緩衝材' : 'パレット・バンド・ストレッチフィルム'
+      }の重さ）`
+    case 'volume': {
+      const added = result.volume - c.netVolume
+      return `${label}：増えた容積 ${qty(added)} m³ × ${CRATE_KG_PER_ADDED_M3} kg/m³ ＝ ${kg(c.packingKg)} kg（+${PACKING_WEIGHT_PERCENT.crate}% の ${kg(
+        (c.baseWeight * PACKING_WEIGHT_PERCENT.crate) / 100,
+      )} kg より重いため、こちらを採用）`
+    }
+    case 'manualPercent':
+      return `手動：基準重量 ${kg(c.baseWeight)} kg × ${percent(c.packingPercent)} ＝ ${kg(c.packingKg)} kg`
+    case 'manualKg':
+      return `手動：${kg(c.packingKg)} kg（基準重量の ${percent(round1(c.packingPercent))}）`
+  }
+}
+
+/** Packing materials: automatic by the allowance, or by hand as a % of the product weight / kg. */
+function PackingWeightField({ quote, result, onChange }: { quote: QuoteSettings; result: QuoteResult; onChange: (patch: Partial<QuoteSettings>) => void }) {
+  const id = useId()
+  const manual = quote.packingWeight
+  const [display, setDisplay] = useState<PackingWeightSetting['unit']>(manual?.unit ?? 'pct')
+  const unit = manual?.unit ?? display
+  const c = result.cargo
+  const value = manual ? manual.value : unit === 'pct' ? round1(c.packingPercent) : round1(c.packingKg)
+  const toggle = (next: PackingWeightSetting['unit']) => {
+    setDisplay(next)
+    if (!manual || manual.unit === next) return
+    const converted = next === 'kg' ? round1((c.baseWeight * manual.value) / 100) : c.baseWeight > 0 ? round1((manual.value / c.baseWeight) * 100) : 0
+    onChange({ packingWeight: { unit: next, value: converted } })
+  }
+  return (
+    <div>
+      <FieldLabel
+        htmlFor={id}
+        extra={<AutoState manual={manual !== null} onReset={() => onChange({ packingWeight: null })} autoLabel="係数から自動" />}
+      >
+        梱包材の重量（Packing Weight）
+      </FieldLabel>
+      <div className="flex items-center gap-1.5">
+        <NumberField
+          id={id}
+          className="flex-1"
+          value={value}
+          onChange={(v) => onChange({ packingWeight: { unit, value: v } })}
+          min={0}
+          max={unit === 'pct' ? MAX_PACKING_WEIGHT_PERCENT : MAX_PACKING_WEIGHT_KG}
+          step={unit === 'pct' ? 0.5 : 1}
+          ariaLabel={unit === 'pct' ? '梱包材の重量（基準重量に対する %）' : '梱包材の重量（kg）'}
+          suffix={unit === 'pct' ? '%' : 'kg'}
+        />
+        <MiniToggle value={unit} options={WEIGHT_UNITS} onChange={toggle} label="梱包材の重量の単位" />
+      </div>
+      <Hint>{packingWeightHint(quote, result)}</Hint>
+    </div>
+  )
+}
 
 function SizeRowEditor({
   row,
@@ -199,12 +289,14 @@ export function QuoteCargoBlock({ quote, result, link, onChange, onShowVanning }
                   >
                     <span className="block text-[11px] leading-tight font-semibold">{label}</span>
                     <span className="mt-0.5 block text-[10px] text-slate-500 tabular-nums">{note}</span>
+                    <span className="block text-[10px] text-slate-500 tabular-nums">{ALLOWANCES.find((a) => a.value === value)?.weight}</span>
                   </button>
                 )
               })}
             </div>
-            <Hint>製品の裸寸しか分からないときは、梱包方法の係数を選ぶと梱包後の M3 を見込めます。</Hint>
+            <Hint>製品の裸寸・正味重量しか分からないときは、梱包方法を選ぶと梱包後の M3 と重量（梱包材の重さ）を見込めます。</Hint>
           </div>
+          <PackingWeightField quote={quote} result={result} onChange={onChange} />
         </div>
       )}
 
@@ -282,16 +374,30 @@ export function QuoteCargoBlock({ quote, result, link, onChange, onShowVanning }
       )}
 
       <div className="rounded-lg bg-indigo-50/70 p-3 ring-1 ring-indigo-100">
-        {mode === 'simple' && (
-          <p className="mb-1.5 text-[11px] text-indigo-900/80 tabular-nums">
-            寸法の合計 {qty(result.cargo.netVolume)} m³ × {result.cargo.factor.toFixed(2)}（{ALLOWANCES.find((a) => a.value === quote.allowance)?.label}）＝ 概算請求M3
+        {mode === 'simple' ? (
+          <div className="mb-1.5 space-y-0.5 text-[11px] text-indigo-900/80 tabular-nums">
+            <p>
+              寸法の合計 {qty(result.cargo.netVolume)} m³ × {result.cargo.factor.toFixed(2)}（{ALLOWANCES.find((a) => a.value === quote.allowance)?.label}）＝
+              梱包後概算M3
+            </p>
+            <p>
+              基準重量 {kg(result.cargo.baseWeight)} kg ＋ 梱包材 {kg(result.cargo.packingKg)} kg（+{percent(round1(result.cargo.packingPercent))}）＝
+              梱包後概算重量
+            </p>
+          </div>
+        ) : (
+          <p className="mb-1.5 text-[11px] text-indigo-900/80">
+            {mode === 'direct' ? '入力した容積・重量を梱包後の数値として扱います。' : '積載3Dの貨物の寸法・重量を梱包後の数値として扱います。'}
           </p>
         )}
         <div className="grid grid-cols-3 gap-2">
-          <Stat label="概算請求M3" value={`${qty(result.volume)} m³`} strong />
-          <Stat label="概算総重量" value={`${kgText(Math.round(result.weight))} kg`} />
-          <Stat label="課金 R/T（W/M）" value={`${qty(result.revenueTons)} RT`} />
+          <Stat label="梱包後概算M3" value={`${qty(result.volume)} m³`} strong />
+          <Stat label="梱包後概算重量" value={`${kgText(Math.round(result.weight))} kg`} strong />
+          <Stat label="課金 R/T（W/M）" value={`${qty(result.revenueTons)} RT`} strong />
         </div>
+        <p className="mt-1 text-[10px] text-indigo-900/70 tabular-nums">
+          R/T ＝ max（容積 {qty(result.volume)} m³, 重量 {qty(result.weight / 1000)} t）。トラック・コンテナの重量判定も梱包後の重量で行います。
+        </p>
         <p className="mt-2 text-xs text-indigo-950">
           推奨：<span className="font-bold">{recommendationLabel(result)}</span>
           <span className="text-indigo-900/70">（{recommendationReason(result)}）</span>

@@ -1,11 +1,13 @@
-import { RotateCcw } from 'lucide-react'
+import { AlertTriangle, RotateCcw } from 'lucide-react'
 import { useId, useState, type ReactNode } from 'react'
 import { getContainerSpec, specsOfCategory, type ContainerCategory, type ContainerId } from '../data/containers'
 import { MAX_QUOTE_CHARGE, MAX_QUOTE_UNITS } from '../state/defaults'
 import type { MoneyAmount, UnitCount } from '../types'
+import type { LoadCheck } from '../utils/incotermsCalc'
 import type { UnitChoice } from '../utils/quotation'
 import { cx, focusRing, inputClass } from './classes'
 import { NumberField } from './NumberField'
+import { kgText, qty } from './quoteStyles'
 
 /** Building blocks of the quotation form (tab ⑥). */
 
@@ -47,8 +49,20 @@ export function Hint({ children, tone = 'muted' }: { children: ReactNode; tone?:
   )
 }
 
-/** 「自動」/「手動」 chip with a reset button for manual values. */
-export function AutoState({ manual, onReset, autoLabel = '自動' }: { manual: boolean; onReset: () => void; autoLabel?: string }) {
+/** 「自動」/「手動」 chip with a reset button for manual values (`compact`: icon-only reset, for table rows). */
+export function AutoState({
+  manual,
+  onReset,
+  autoLabel = '自動',
+  compact = false,
+  resetLabel = '自動計算の値に戻す',
+}: {
+  manual: boolean
+  onReset: () => void
+  autoLabel?: string
+  compact?: boolean
+  resetLabel?: string
+}) {
   if (!manual) {
     return (
       <span className="rounded bg-emerald-50 px-1.5 py-px text-[10px] font-semibold whitespace-nowrap text-emerald-700 ring-1 ring-emerald-200">
@@ -58,15 +72,20 @@ export function AutoState({ manual, onReset, autoLabel = '自動' }: { manual: b
   }
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="rounded bg-amber-50 px-1.5 py-px text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">手動</span>
+      <span className="rounded bg-amber-50 px-1.5 py-px text-[10px] font-semibold whitespace-nowrap text-amber-800 ring-1 ring-amber-200">手動</span>
       <button
         type="button"
         onClick={onReset}
-        className={cx('inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-medium whitespace-nowrap text-indigo-700 hover:bg-indigo-50', focusRing)}
-        title="自動計算の値に戻す"
+        className={cx(
+          'inline-flex items-center gap-0.5 rounded px-1 text-[10px] font-medium whitespace-nowrap text-indigo-700 hover:bg-indigo-50',
+          compact && 'py-0.5',
+          focusRing,
+        )}
+        title={resetLabel}
+        aria-label={resetLabel}
       >
         <RotateCcw size={11} />
-        自動に戻す
+        {!compact && '自動に戻す'}
       </button>
     </span>
   )
@@ -163,19 +182,18 @@ export function MiniToggle<T extends string>({
 }
 
 const MONEY_CURRENCIES = [
-  { value: 'USD' as const, label: 'USD' },
   { value: 'JPY' as const, label: '円' },
+  { value: 'USD' as const, label: 'USD' },
 ]
 
 /**
- * Amount in USD or JPY that is automatic (table / preset) until edited. Switching the currency
- * converts a manual amount at the USD rate; an automatic amount is just shown in the other currency.
+ * Amount in JPY or USD that is automatic (rate table / preset, JPY) until edited. Switching the
+ * currency converts a manual amount at the USD rate; an automatic amount is just shown in the other currency.
  */
 export function MoneyField({
   label,
   value,
-  autoUsd,
-  autoJpy,
+  auto,
   usdRate,
   onChange,
   autoLabel,
@@ -183,17 +201,17 @@ export function MoneyField({
 }: {
   label: string
   value: MoneyAmount | null
-  autoUsd: number
-  autoJpy: number
+  /** Automatic amount (JPY). */
+  auto: number
   usdRate: number
   onChange: (value: MoneyAmount | null) => void
   autoLabel?: string
   children?: ReactNode
 }) {
   const id = useId()
-  const [display, setDisplay] = useState<'JPY' | 'USD'>(value?.currency ?? 'USD')
+  const [display, setDisplay] = useState<'JPY' | 'USD'>(value?.currency ?? 'JPY')
   const currency = value?.currency ?? display
-  const shown = value ? value.amount : currency === 'USD' ? Math.round(autoUsd * 100) / 100 : autoJpy
+  const shown = value ? value.amount : currency === 'USD' ? Math.round((auto / usdRate) * 100) / 100 : auto
   const toggle = (next: 'JPY' | 'USD') => {
     setDisplay(next)
     if (!value || value.currency === next) return
@@ -249,6 +267,24 @@ export function YenField({
       <NumberField id={id} value={value ?? auto} onChange={onChange} min={0} max={MAX_QUOTE_CHARGE} step={1000} ariaLabel={label} suffix="円" />
       {children}
     </div>
+  )
+}
+
+/** Warning when the containers / trucks cannot carry the packed weight or volume (重量・容積オーバー). */
+export function LoadWarning({ check, choice, volume, weight }: { check: LoadCheck | null; choice: UnitChoice; volume: number; weight: number }) {
+  if (!check || (!check.overWeight && !check.overVolume)) return null
+  const problems = [
+    check.overWeight && `梱包後重量 ${kgText(Math.round(weight))} kg が最大積載 ${kgText(check.capacityKg)} kg を超えています`,
+    check.overVolume && `梱包後容積 ${qty(volume)} m³ が容積 ${qty(check.capacityM3)} m³ を超えています`,
+  ].filter(Boolean)
+  return (
+    <p role="alert" className="mt-1 flex items-start gap-1.5 rounded-md bg-rose-50 px-2 py-1.5 text-[11px] leading-relaxed text-rose-800 ring-1 ring-rose-200">
+      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+      <span>
+        {choice.spec.label} × {choice.units}
+        {choice.spec.unitJa}：{problems.join('。')}。{choice.source === 'manual' ? '規格・数量を見直してください。' : ''}
+      </span>
+    </p>
   )
 }
 

@@ -54,6 +54,9 @@ export const MAX_QUOTE_UNITS = 99
 /** Size calculator rows and packing rate limits. */
 export const MAX_QUOTE_ROWS = 3
 export const MAX_PACKING_RATE = 1_000_000
+/** Packing materials by hand: up to 100 % of the product weight, or up to 1,000 t. */
+export const MAX_PACKING_WEIGHT_PERCENT = 100
+export const MAX_PACKING_WEIGHT_KG = 1_000_000
 /** Default quotation validity: today + 14 days. */
 export const DEFAULT_VALIDITY_DAYS = 14
 
@@ -82,25 +85,32 @@ export const DEFAULT_QUOTE: Readonly<QuoteSettings> = {
   sizeUnit: 'cm',
   items: defaultQuoteRows('cm'),
   allowance: 'none',
+  packingWeight: null,
   volume: 8.5,
   weight: 2400,
   packingCost: true,
   packingRate: DEFAULT_PACKING_RATE,
+  packingAmount: null,
   exw: 5_000_000,
   currency: DEFAULT_QUOTE_CURRENCY,
   fxRate: CURRENCY_INFO[DEFAULT_QUOTE_CURRENCY].defaultRate,
   fxBuffer: 3,
   usdRate: DEFAULT_USD_RATE,
   domestic: null,
-  exportCharges: null,
+  customs: null,
+  portCharges: null,
   mode: 'auto',
   destination: '',
+  port: '',
   market: 'normal',
   freight: null,
+  surcharge: null,
   freightBuffer: 10,
   insuranceRate: 0.2,
+  insurance: null,
   local: null,
   dutyRate: 5,
+  duty: null,
   validUntil: null,
   container: null,
   truck: null,

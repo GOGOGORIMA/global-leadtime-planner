@@ -2,17 +2,18 @@
  * Incoterms price build-up for the export quotation board (tab ⑥).
  *
  * Everything starts from an estimated volume V (m³) and gross weight W (kg) — from a quick size
- * calculator with a packing allowance, typed in directly, or taken from the loading simulator.
- * The EXW base price is the sales price ex works; there is deliberately no product cost or margin
- * anywhere. Packing, logistics, insurance and duty are stacked on top:
+ * calculator whose packing allowance inflates the volume and adds the weight of the packing
+ * materials, typed in directly, or taken from the loading simulator. The EXW base price is the
+ * sales price ex works; there is deliberately no product cost or margin anywhere. Packing,
+ * logistics, insurance and duty are stacked on top:
  *
  *   EXW = base price + export packing (V × packing rate, optional)
- *   FOB = EXW + domestic truck freight + export clearance & port charges
- *   CFR = FOB + freight × (1 + freight contingency)
+ *   FOB = EXW + domestic truck + export customs clearance + export port charges (THC / CFS / B/L …)
+ *   CFR = FOB + (base freight + surcharges) × (1 + freight contingency)
  *   CIF = CFR / (1 − 1.1 × i)            ← insurance on 110 % of CIF, solved without a loop
- *   insurance = CIF − CFR
+ *   insurance = CIF − CFR                 (a premium entered by hand: CIF = CFR + premium)
  *   DAP = CIF + destination (DAP) charges
- *   duty = CIF × d
+ *   duty = CIF × d                        (or an amount entered by hand)
  *   DDP = DAP + duty
  *
  * All amounts are JPY, rounded to whole yen at every step so the increments add up exactly.
@@ -42,6 +43,75 @@ export function isPackingAllowance(value: unknown): value is PackingAllowance {
   return typeof value === 'string' && Object.hasOwn(PACKING_ALLOWANCES, value)
 }
 
+/**
+ * Weight of the packing materials as a share of the product weight (%): none for packed sizes,
+ * +8 % for pallets / bands / stretch wrap, +15 % for export crates / skids.
+ */
+export const PACKING_WEIGHT_PERCENT: Readonly<Record<PackingAllowance, number>> = { none: 0, carton: 8, crate: 15 }
+/**
+ * Export crates: timber, battens and dunnage per m³ of added volume. Light, bulky goods in large
+ * crates use this when it is more than the +15 %.
+ */
+export const CRATE_KG_PER_ADDED_M3 = 80
+
+/** Packing weight entered by hand: a share of the product weight (`pct`, %) or a fixed weight (`kg`). */
+export interface PackingWeightSetting {
+  unit: 'pct' | 'kg'
+  value: number
+}
+
+/** How the packing weight was found: none, the allowance's %, the crate volume rule, or by hand. */
+export type PackingWeightRule = 'none' | 'percent' | 'volume' | 'manualPercent' | 'manualKg'
+
+export interface GrossWeightEstimate {
+  /** Product weight before packing (基準重量). */
+  baseWeightKg: number
+  /** Weight of the packing materials and its share of the product weight (%). */
+  packingKg: number
+  packingPercent: number
+  rule: PackingWeightRule
+  /** baseWeightKg + packingKg (梱包後概算重量), used for R/T, trucks, containers and air. */
+  estimatedGrossWeightKg: number
+}
+
+/** kg rounded to 0.1 kg (avoids floating-point noise such as 1943.9999999). */
+const roundKg = (kg: number) => Math.round(kg * 10) / 10
+
+/**
+ * Gross (packed) weight from the product weight and the packing allowance: +0 % / +8 % / +15 %, for
+ * crates at least the added volume × 80 kg/m³; a manual % or kg replaces the automatic weight.
+ */
+export function estimateGrossWeight(
+  baseWeightKg: number,
+  allowance: PackingAllowance,
+  addedVolumeM3 = 0,
+  manual: PackingWeightSetting | null = null,
+): GrossWeightEstimate {
+  const base = roundKg(Math.max(0, baseWeightKg))
+  const shareOf = (kg: number) => (base > 0 ? (kg / base) * 100 : 0)
+  const result = (packingKg: number, packingPercent: number, rule: PackingWeightRule): GrossWeightEstimate => ({
+    baseWeightKg: base,
+    packingKg,
+    packingPercent,
+    rule,
+    estimatedGrossWeightKg: roundKg(base + packingKg),
+  })
+  if (manual) {
+    if (manual.unit === 'pct') return result(roundKg((base * Math.max(0, manual.value)) / 100), Math.max(0, manual.value), 'manualPercent')
+    const kg = roundKg(Math.max(0, manual.value))
+    return result(kg, shareOf(kg), 'manualKg')
+  }
+  const percent = PACKING_WEIGHT_PERCENT[allowance]
+  if (percent === 0) return result(0, 0, 'none')
+  const byPercent = (base * percent) / 100
+  const byVolume = allowance === 'crate' ? Math.max(0, addedVolumeM3) * CRATE_KG_PER_ADDED_M3 : 0
+  if (byVolume > byPercent) {
+    const kg = roundKg(byVolume)
+    return result(kg, shareOf(kg), 'volume')
+  }
+  return result(roundKg(byPercent), percent, 'percent')
+}
+
 export type SizeUnit = 'cm' | 'mm'
 
 /** One line of the quick size calculator: sizes in cm or mm, weight per piece in kg. */
@@ -59,30 +129,35 @@ export function rowVolume(row: SizeRow, unit: SizeUnit): number {
   return (row.length / perMetre) * (row.width / perMetre) * (row.height / perMetre) * row.quantity
 }
 
-export interface SizeEstimate {
+export interface SizeEstimate extends GrossWeightEstimate {
   /** m³ of the entered (bare or packed) sizes. */
   netVolume: number
   /** Allowance factor applied (1.0 / 1.15 / 1.25). */
   factor: number
-  /** netVolume × factor = estimated gross m³ used for every charge. */
+  /** netVolume × factor = estimated gross m³ (梱包後概算M3) used for every charge. */
   volume: number
-  /** kg (unit weight × quantity; the allowance does not change the weight). */
-  weight: number
   pieces: number
 }
 
 /** m³ rounded to cm³ (avoids floating-point noise such as 7.260000000000002). */
 const roundM3 = (m3: number) => Math.round(m3 * 1e6) / 1e6
 
-/** Bare M3 × packing allowance = estimated gross M3 (Estimated Gross M3). */
-export function estimateFromSizes(rows: readonly SizeRow[], unit: SizeUnit, allowance: PackingAllowance): SizeEstimate {
+/** Bare M3 × packing allowance = estimated gross M3, product weight + packing materials = gross weight. */
+export function estimateFromSizes(
+  rows: readonly SizeRow[],
+  unit: SizeUnit,
+  allowance: PackingAllowance,
+  packingWeight: PackingWeightSetting | null = null,
+): SizeEstimate {
   const netVolume = roundM3(rows.reduce((sum, row) => sum + rowVolume(row, unit), 0))
   const factor = PACKING_ALLOWANCES[allowance]
+  const volume = roundM3(netVolume * factor)
+  const baseWeight = rows.reduce((sum, row) => sum + row.weight * row.quantity, 0)
   return {
     netVolume,
     factor,
-    volume: roundM3(netVolume * factor),
-    weight: rows.reduce((sum, row) => sum + row.weight * row.quantity, 0),
+    volume,
+    ...estimateGrossWeight(baseWeight, allowance, roundM3(volume - netVolume), packingWeight),
     pieces: rows.reduce((sum, row) => sum + row.quantity, 0),
   }
 }
@@ -146,6 +221,22 @@ export function recommendTruck(volumeM3: number, weightKg: number): UnitEstimate
   return { id: largest.id, units: Math.max(1, ceilUnits(volumeM3 / largest.volume), ceilUnits(weightKg / largest.weight)) }
 }
 
+/** Payload and volume of `units` containers / trucks against the load (重量・容積オーバーの判定). */
+export interface LoadCheck {
+  /** Maximum payload (kg) and nominal capacity (m³) of all units together. */
+  capacityKg: number
+  capacityM3: number
+  overWeight: boolean
+  overVolume: boolean
+}
+
+export function checkLoad(id: ContainerId, units: number, volumeM3: number, weightKg: number): LoadCheck {
+  const spec = getContainerSpec(id)
+  const capacityKg = spec.maxPayload * Math.max(1, units)
+  const capacityM3 = Math.round(spec.capacity * Math.max(1, units) * 10) / 10
+  return { capacityKg, capacityM3, overWeight: weightKg > capacityKg + 1e-9, overVolume: volumeM3 > capacityM3 + 1e-9 }
+}
+
 /** Export packing (crates / pallets) per m³ of estimated volume (JPY). */
 export const DEFAULT_PACKING_RATE = 15000
 
@@ -181,18 +272,25 @@ export interface IncotermsInput {
   packing: number
   /** Domestic truck freight factory → port / airport (JPY). */
   domestic: number
-  /** Export clearance & port charges (JPY). */
-  exportCharges: number
-  /** International freight before the contingency (JPY). */
+  /** Export customs clearance (輸出通関料, JPY). */
+  customs: number
+  /** Export port / airport charges: THC, CFS, B/L, vanning, seal … (JPY). */
+  portCharges: number
+  /** International freight before the contingency: base freight (O/F) and surcharges (BAF / LSS …), JPY. */
   freight: number
+  surcharge: number
   /** Freight contingency (%), e.g. 10. */
   freightBuffer: number
   /** Marine insurance rate (%) on 110 % of CIF, e.g. 0.2. */
   insuranceRate: number
+  /** Premium entered by hand (JPY); `null` / omitted = CIF × 110 % × rate. */
+  insurance?: number | null
   /** Destination charges (JPY). */
   localCharges: number
   /** Import duty rate (%) on CIF, e.g. 5. */
   dutyRate: number
+  /** Duty entered by hand (JPY); `null` / omitted = CIF × rate. */
+  duty?: number | null
 }
 
 export interface IncotermsResult {
@@ -200,69 +298,85 @@ export interface IncotermsResult {
   base: number
   packing: number
   exw: number
-  fob: number
-  cfr: number
-  cif: number
-  dap: number
-  ddp: number
   domestic: number
-  exportCharges: number
-  /** domestic + export charges (FOB − EXW). */
+  customs: number
+  portCharges: number
+  /** domestic + customs + port charges (FOB − EXW). */
   fobCharges: number
-  /** Freight before / of / including the contingency. */
-  freightBase: number
+  fob: number
+  /** Base freight and surcharges before the contingency, their sum, the contingency and the total. */
+  baseFreight: number
+  surcharge: number
+  freightSubtotal: number
   freightContingency: number
   freight: number
+  cfr: number
   insurance: number
   /** Sum insured (110 % of CIF). */
   insuredValue: number
+  cif: number
   localCharges: number
+  dap: number
   duty: number
+  ddp: number
 }
 
 const yen = (n: number) => Math.round(Number.isFinite(n) ? Math.max(0, n) : 0)
+const isAmount = (n: number | null | undefined): n is number => typeof n === 'number' && Number.isFinite(n)
 
 export function calculateIncoterms(input: IncotermsInput): IncotermsResult {
   const base = yen(input.base)
   const packing = yen(input.packing)
   const exw = base + packing
   const domestic = yen(input.domestic)
-  const exportCharges = yen(input.exportCharges)
-  const fob = exw + domestic + exportCharges
+  const customs = yen(input.customs)
+  const portCharges = yen(input.portCharges)
+  const fobCharges = domestic + customs + portCharges
+  const fob = exw + fobCharges
 
-  const freightBase = yen(input.freight)
-  const freight = yen(freightBase * (1 + Math.max(0, input.freightBuffer) / 100))
+  const baseFreight = yen(input.freight)
+  const surcharge = yen(input.surcharge)
+  const freightSubtotal = baseFreight + surcharge
+  const freight = yen(freightSubtotal * (1 + Math.max(0, input.freightBuffer) / 100))
   const cfr = fob + freight
 
-  // CIF = CFR + 1.1 × i × CIF  ⇔  CIF = CFR / (1 − 1.1 × i)
-  const share = INSURED_VALUE_RATIO * (Math.max(0, input.insuranceRate) / 100)
-  const cif = share > 0 && share < 1 ? yen(cfr / (1 - share)) : cfr
+  let cif: number
+  if (isAmount(input.insurance)) {
+    cif = cfr + yen(input.insurance)
+  } else {
+    // CIF = CFR + 1.1 × i × CIF  ⇔  CIF = CFR / (1 − 1.1 × i)
+    const share = INSURED_VALUE_RATIO * (Math.max(0, input.insuranceRate) / 100)
+    cif = share > 0 && share < 1 ? yen(cfr / (1 - share)) : cfr
+  }
   const insurance = cif - cfr
 
   const localCharges = yen(input.localCharges)
   const dap = cif + localCharges
-  const duty = yen(cif * (Math.max(0, input.dutyRate) / 100))
+  const duty = isAmount(input.duty) ? yen(input.duty) : yen(cif * (Math.max(0, input.dutyRate) / 100))
   const ddp = dap + duty
 
   return {
     base,
     packing,
     exw,
-    fob,
-    cfr,
-    cif,
-    dap,
-    ddp,
     domestic,
-    exportCharges,
-    fobCharges: domestic + exportCharges,
-    freightBase,
-    freightContingency: freight - freightBase,
+    customs,
+    portCharges,
+    fobCharges,
+    fob,
+    baseFreight,
+    surcharge,
+    freightSubtotal,
+    freightContingency: freight - freightSubtotal,
     freight,
+    cfr,
     insurance,
     insuredValue: yen(cif * INSURED_VALUE_RATIO),
+    cif,
     localCharges,
+    dap,
     duty,
+    ddp,
   }
 }
 

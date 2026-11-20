@@ -16,8 +16,8 @@ import {
   type UnitCount,
 } from '../types'
 import { isISODate, normalizeStepDays, type ISODate, type ScheduleMode } from '../utils/dateCalc'
-import { FREIGHT_ORIGIN, isFreightMarket, isQuoteMode } from '../utils/freightRates'
-import { isPackingAllowance, type SizeRow, type SizeUnit } from '../utils/incotermsCalc'
+import { FREIGHT_ORIGIN, PORT_IDS, isFreightMarket, isQuoteMode } from '../utils/freightRates'
+import { isPackingAllowance, type PackingWeightSetting, type SizeRow, type SizeUnit } from '../utils/incotermsCalc'
 import { isValidTimeZone } from '../utils/timezone'
 import {
   DEFAULT_CUSHIONING,
@@ -37,6 +37,8 @@ import {
   MAX_QUOTE_PRICE,
   MAX_QUOTE_UNITS,
   MAX_PACKING_RATE,
+  MAX_PACKING_WEIGHT_KG,
+  MAX_PACKING_WEIGHT_PERCENT,
   MAX_QUOTE_ROWS,
   MAX_QUOTE_VOLUME,
   MAX_QUOTE_WEIGHT,
@@ -148,6 +150,13 @@ function sanitizeMoney(value: Partial<MoneyAmount> | null | undefined): MoneyAmo
   return amount === null ? null : { amount, currency: value.currency }
 }
 
+/** Packing materials by hand: 0–100 % of the product weight or 0–1,000,000 kg (0.1 steps). */
+function sanitizePackingWeight(value: Partial<PackingWeightSetting> | null | undefined): PackingWeightSetting | null {
+  if (!value || (value.unit !== 'pct' && value.unit !== 'kg')) return null
+  const amount = optionalNumber(value.value, value.unit === 'pct' ? MAX_PACKING_WEIGHT_PERCENT : MAX_PACKING_WEIGHT_KG, 1)
+  return amount === null ? null : { unit: value.unit, value: amount }
+}
+
 function sanitizeUnits(value: Partial<UnitCount> | null | undefined, category: ContainerCategory): UnitCount | null {
   if (!value || !isContainerId(value.id) || getContainerSpec(value.id).category !== category) return null
   return { id: value.id, units: clampInt(value.units, 1, MAX_QUOTE_UNITS, 1) }
@@ -182,9 +191,9 @@ function convertSizeRows(rows: readonly SizeRow[], from: SizeUnit, to: SizeUnit)
 }
 
 /**
- * Makes the quotation settings safe: amounts 0–1,000 億円 / 10 億円, rates > 0, FX buffer 0–10 %,
- * freight contingency 0–30 %, insurance 0–5 %, duty 0–30 %, known destination (never the origin).
- * The FX rate of JPY quotes is always 1.
+ * Makes the quotation settings safe: amounts 0–1,000 億円 (price, insurance, duty) / 10 億円 (charges),
+ * rates > 0, FX buffer 0–10 %, freight contingency 0–30 %, insurance 0–5 %, duty 0–30 %, known
+ * destination (never the origin), known port choice. The FX rate of JPY quotes is always 1.
  */
 export function sanitizeQuote(input: Partial<QuoteSettings> | undefined, fallback: QuoteSettings = DEFAULT_QUOTE): QuoteSettings {
   const q = input ?? {}
@@ -200,25 +209,32 @@ export function sanitizeQuote(input: Partial<QuoteSettings> | undefined, fallbac
     sizeUnit,
     items: sanitizeSizeRows(q.items, sizeUnit),
     allowance: isPackingAllowance(q.allowance) ? q.allowance : fallback.allowance,
+    packingWeight: sanitizePackingWeight(q.packingWeight),
     volume: clampNumber(q.volume, 0, MAX_QUOTE_VOLUME, 3, fallback.volume),
     weight: clampNumber(q.weight, 0, MAX_QUOTE_WEIGHT, 1, fallback.weight),
     packingCost: typeof q.packingCost === 'boolean' ? q.packingCost : fallback.packingCost,
     packingRate: clampNumber(q.packingRate, 0, MAX_PACKING_RATE, 0, fallback.packingRate),
+    packingAmount: optionalNumber(q.packingAmount, MAX_QUOTE_CHARGE, 0),
     exw: clampNumber(q.exw, 0, MAX_QUOTE_PRICE, 0, fallback.exw),
     currency,
     fxRate: currency === 'JPY' ? 1 : sanitizeRate(q.fxRate, defaultRate),
     fxBuffer: clampNumber(q.fxBuffer, 0, MAX_FX_BUFFER, 1, fallback.fxBuffer),
     usdRate: sanitizeRate(q.usdRate, DEFAULT_USD_RATE),
     domestic: optionalNumber(q.domestic, MAX_QUOTE_CHARGE, 0),
-    exportCharges: optionalNumber(q.exportCharges, MAX_QUOTE_CHARGE, 0),
+    customs: optionalNumber(q.customs, MAX_QUOTE_CHARGE, 0),
+    portCharges: optionalNumber(q.portCharges, MAX_QUOTE_CHARGE, 0),
     mode: isQuoteMode(q.mode) ? q.mode : fallback.mode,
     destination,
+    port: typeof q.port === 'string' && PORT_IDS.has(q.port) ? q.port : '',
     market: isFreightMarket(q.market) ? q.market : fallback.market,
     freight: sanitizeMoney(q.freight),
+    surcharge: sanitizeMoney(q.surcharge),
     freightBuffer: clampNumber(q.freightBuffer, 0, MAX_FREIGHT_BUFFER, 1, fallback.freightBuffer),
     insuranceRate: clampNumber(q.insuranceRate, 0, MAX_INSURANCE_RATE, 3, fallback.insuranceRate),
+    insurance: optionalNumber(q.insurance, MAX_QUOTE_PRICE, 0),
     local: sanitizeMoney(q.local),
     dutyRate: clampNumber(q.dutyRate, 0, MAX_DUTY_RATE, 2, fallback.dutyRate),
+    duty: optionalNumber(q.duty, MAX_QUOTE_PRICE, 0),
     validUntil: isISODate(q.validUntil) ? q.validUntil : null,
     container: sanitizeUnits(q.container, 'sea'),
     truck: sanitizeUnits(q.truck, 'truck'),

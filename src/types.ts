@@ -2,7 +2,7 @@ import type { ContainerCategory, ContainerId } from './data/containers'
 import type { QuoteCurrency } from './data/currencies'
 import type { ISODate, OverrideKind, ScheduleMode } from './utils/dateCalc'
 import type { FreightMarket, QuoteMode } from './utils/freightRates'
-import type { PackingAllowance, SizeRow, SizeUnit } from './utils/incotermsCalc'
+import type { PackingAllowance, PackingWeightSetting, SizeRow, SizeUnit } from './utils/incotermsCalc'
 
 /** Calendar id for steps counted in calendar days (every day is a working day). */
 export const CALENDAR_DAYS = 'calendar'
@@ -105,12 +105,16 @@ export interface QuoteSettings {
   sizeUnit: SizeUnit
   items: SizeRow[]
   allowance: PackingAllowance
+  /** Size calculator: weight of the packing materials by hand (`null` = by the allowance: +0 / +8 / +15 %). */
+  packingWeight: PackingWeightSetting | null
   /** Direct entry: estimated gross volume (m³) and weight (kg). */
   volume: number
   weight: number
-  /** Add export packing (crates / pallets) to EXW at `packingRate` JPY per m³. */
+  /** Add export packing (crates / pallets) to EXW at `packingRate` JPY per m³ (or `packingAmount`). */
   packingCost: boolean
   packingRate: number
+  /** Export packing cost entered by hand (JPY). */
+  packingAmount: number | null
   /** EXW base price (JPY): the sales price ex works (before export packing when `packingCost` is on). */
   exw: number
   currency: QuoteCurrency
@@ -122,23 +126,30 @@ export interface QuoteSettings {
   usdRate: number
   /** Domestic truck freight factory → port (JPY). */
   domestic: number | null
-  /** Export clearance & port charges: THC / B/L / vanning (JPY). */
-  exportCharges: number | null
+  /** Export customs clearance (輸出通関料, JPY). */
+  customs: number | null
+  /** Export port charges: THC / CFS / B/L / vanning / seal (JPY). */
+  portCharges: number | null
   /** `auto` = LCL / FCL recommended from the estimated volume. */
   mode: QuoteMode
   /** Destination country ('' = the schedule's partner country). */
   destination: string
+  /** Port choice of destinations with several ports, e.g. US `west` / `east` ('' = automatic). */
+  port: string
   market: FreightMarket
-  /** Freight override, e.g. a forwarder's actual quote (`null` = table rate × market). */
+  /** Base freight (O/F) and surcharges (BAF / LSS …) by hand, e.g. a forwarder's quote (`null` = table × market). */
   freight: MoneyAmount | null
-  /** Freight contingency (%, 0–30) added to the market / override freight. */
+  surcharge: MoneyAmount | null
+  /** Freight contingency (%, 0–30) added to the base freight and surcharges. */
   freightBuffer: number
-  /** Marine insurance rate (%) on 110 % of CIF. */
+  /** Marine insurance rate (%) on 110 % of CIF, or the premium by hand (JPY). */
   insuranceRate: number
+  insurance: number | null
   /** Destination port / import clearance / delivery charges (DAP). */
   local: MoneyAmount | null
-  /** Import duty (%, 0–30) on CIF. */
+  /** Import duty (%, 0–30) on CIF, or the duty by hand (JPY). */
   dutyRate: number
+  duty: number | null
   /** Quotation validity (`null` = today + 14 days). */
   validUntil: ISODate | null
   /** FCL containers (sea sizes only). */

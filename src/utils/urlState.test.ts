@@ -80,25 +80,32 @@ describe('URL state', () => {
         { length: 600, width: 400, height: 300, quantity: 12, weight: 18 },
       ],
       allowance: 'crate',
+      packingWeight: { unit: 'kg', value: 120.5 },
       volume: 12.345,
       weight: 2500.5,
       packingCost: false,
       packingRate: 18000,
+      packingAmount: 150000,
       exw: 12_345_678,
       currency: 'EUR',
       fxRate: 171.25,
       fxBuffer: 4.5,
       usdRate: 148.5,
       domestic: 60000,
-      exportCharges: null,
+      customs: 13500,
+      portCharges: null,
       mode: 'lcl',
       destination: 'DE',
+      port: 'west',
       market: 'peak',
       freight: { amount: 1850.5, currency: 'USD' },
+      surcharge: { amount: 420, currency: 'USD' },
       freightBuffer: 15,
       insuranceRate: 0.25,
+      insurance: 4200,
       local: { amount: 98000, currency: 'JPY' },
       dutyRate: 2.7,
+      duty: null,
       validUntil: '2026-12-15',
       container: { id: '40hc', units: 2 },
       truck: { id: '10t', units: 1 },
@@ -140,22 +147,28 @@ describe('URL state', () => {
     expect(quoteParams).toEqual({
       qsu: 'mm',
       qal: 'crate',
+      qpw: '120.5kg',
       qv: '12.345',
       qw: '2500.5',
       qpc: '0',
       qpr: '18000',
+      qpk: '150000',
       qx: '12345678',
       qcur: 'EUR',
       qfx: '171.25',
       qfb: '4.5',
       qusd: '148.5',
       qdom: '60000',
+      qcus: '13500',
       qm: 'lcl',
       qdst: 'DE',
+      qpod: 'west',
       qmk: 'peak',
-      qfr: '1850.5USD',
+      qof: '1850.5USD',
+      qsc: '420USD',
       qcb: '15',
       qins: '0.25',
+      qprem: '4200',
       qloc: '98000JPY',
       qduty: '2.7',
       qval: '2026-12-15',
@@ -164,12 +177,32 @@ describe('URL state', () => {
     })
   })
 
+  it('reads older quotation links: all-in freight (qfr) and export charges (qexp) keep their totals', () => {
+    expect(parseState('?qfr=1800USD&qexp=99600', fallback).state.quote).toMatchObject({
+      freight: { amount: 1800, currency: 'USD' },
+      surcharge: { amount: 0, currency: 'USD' },
+      portCharges: 99600,
+      customs: 0,
+    })
+    // The new keys win over the old ones.
+    expect(parseState('?qfr=1800USD&qof=1000USD&qexp=99600&qport=80000', fallback).state.quote).toMatchObject({
+      freight: { amount: 1000, currency: 'USD' },
+      surcharge: null,
+      portCharges: 80000,
+      customs: null,
+    })
+    expect(parseState('?qpw=10pct', fallback).state.quote.packingWeight).toEqual({ unit: 'pct', value: 10 })
+    expect(parseState('?qpw=250PCT', fallback).state.quote.packingWeight).toEqual({ unit: 'pct', value: 100 }) // ≤ 100 %
+    expect(parseState('?qpod=EAST', fallback).state.quote.port).toBe('east')
+  })
+
   it('writes no quotation keys for the defaults and sanitizes quotation input', () => {
     expect([...new URLSearchParams(serializeState(fallback)).keys()].filter((k) => k.startsWith('q'))).toEqual([])
     const q = parseState(
       '?qx=-5&qcur=xyz&qfx=0&qfb=25&qusd=abc&qdom=1e12&qexp=-1&qm=ship&qdst=JP&qmk=crazy&qfr=12EUR' +
         '&qcb=55&qins=9&qloc=-5USD&qduty=45&qval=2026-02-30&qv=-3&qw=nope&qct=2t.3&qtr=40hc.1' +
-        '&qcm=bogus&qsu=inch&qi=0x99999x5_0_200000&qi=bad&qal=foam&qpc=maybe&qpr=-10',
+        '&qcm=bogus&qsu=inch&qi=0x99999x5_0_200000&qi=bad&qal=foam&qpc=maybe&qpr=-10' +
+        '&qpw=abc&qpk=-5&qpod=north&qsc=5EUR&qprem=1e15&qdamt=x',
       fallback,
     ).state.quote
     expect(q).toEqual({
@@ -177,7 +210,11 @@ describe('URL state', () => {
       exw: 0,
       fxBuffer: 10,
       domestic: 1_000_000_000,
-      exportCharges: 0,
+      // `qexp` of an older link: port charges (clamped to ≥ 0) with no separate customs fee.
+      portCharges: 0,
+      customs: 0,
+      packingAmount: 0,
+      insurance: 100_000_000_000, // ≤ 1,000 億円
       freightBuffer: 30,
       insuranceRate: 5,
       dutyRate: 30,

@@ -3,7 +3,7 @@
  * Incoterms labels and money formatters. Kept out of component files for React Fast Refresh.
  */
 import type { QuoteCurrency } from '../data/currencies'
-import type { ShippingMode } from '../utils/freightRates'
+import { EXPORT_CHARGE_RATES, type FreightMarket, type PortChargeKey, type PortChargeLine, type RatedAmount, type ShippingMode } from '../utils/freightRates'
 import { FCL20_MAX_M3, FCL40_MAX_M3, LCL_MAX_M3, type Incoterm, type IncotermsResult } from '../utils/incotermsCalc'
 import type { QuoteResult } from '../utils/quotation'
 
@@ -27,24 +27,27 @@ export const SERIES_STYLE: Readonly<Record<CostSeries, { color: string; ink: str
   duty: { color: '#e87ba4', ink: '#ffffff' },
 }
 
-/** Legend / table name, short name inside chart blocks, and the badge on the price cards. */
-export function seriesLabels(series: CostSeries, mode: ShippingMode): { name: string; short: string; badge: string } {
+/**
+ * Legend / table name, short name inside chart blocks, and the label of the item on the price cards
+ * (製品ベース・梱包費・国内・港湾諸掛・国際運賃・サーチャージ・保険料・現地諸掛・関税).
+ */
+export function seriesLabels(series: CostSeries, mode: ShippingMode): { name: string; short: string; item: string } {
   const freight = mode === 'air' ? '航空運賃' : '海上運賃'
   switch (series) {
     case 'exw':
-      return { name: '基準価格', short: '基準価格', badge: '基準価格' }
+      return { name: '製品ベース（基準価格）', short: '製品ベース', item: '製品ベース' }
     case 'packing':
-      return { name: '輸出梱包費', short: '梱包費', badge: '+輸出梱包費' }
+      return { name: '梱包費', short: '梱包費', item: '梱包費' }
     case 'fob':
-      return { name: '国内・輸出諸掛', short: '国内諸掛', badge: '+FOB諸掛' }
+      return { name: '国内・港湾諸掛', short: '国内・港湾', item: '国内・港湾諸掛' }
     case 'freight':
-      return { name: `${freight}（バッファ込）`, short: freight, badge: `+${freight}(バッファ込)` }
+      return { name: `${freight}・サーチャージ（バッファ込）`, short: freight, item: `${freight}・サーチャージ` }
     case 'insurance':
-      return { name: '保険料', short: '保険料', badge: '+保険料' }
+      return { name: '保険料', short: '保険料', item: '保険料' }
     case 'local':
-      return { name: '現地諸掛（DAP費用）', short: '現地諸掛', badge: '+現地諸掛' }
+      return { name: '現地諸掛（DAP 費用）', short: '現地諸掛', item: '現地諸掛' }
     case 'duty':
-      return { name: '現地関税', short: '現地関税', badge: '+現地関税' }
+      return { name: '現地関税', short: '現地関税', item: '現地関税' }
   }
 }
 
@@ -108,6 +111,12 @@ export const kgText = (n: number) => n.toLocaleString('en-US', { maximumFraction
 /** `3%`, `0.2%`. */
 export const percent = (n: number) => `${Number(n.toFixed(2))}%`
 
+/** `¥1,500` per unit with its unit: `¥140,000/本`, `¥15,000/R/T`, `¥650/kg`. */
+export const yenPer = (n: number, unit: string) => `${yen(n)}/${unit}`
+
+/** `¥120,000〜¥180,000`. */
+export const yenRange = ([min, max]: readonly [number, number]) => `${yen(min)}〜${yen(max)}`
+
 /** `$34` / `¥5,150` / `EUR 31` (whole units) for the per-m³ figures. */
 export function compactMoney(amount: number, currency: QuoteCurrency): string {
   const n = Math.round(Math.abs(amount)).toLocaleString('en-US')
@@ -131,6 +140,48 @@ export function recommendationReason(r: QuoteResult): string {
   if (v <= FCL20_MAX_M3) return `${LCL_MAX_M3}〜${FCL20_MAX_M3} m³`
   if (v <= FCL40_MAX_M3) return `${FCL20_MAX_M3}〜${FCL40_MAX_M3} m³`
   return `${FCL40_MAX_M3} m³ 超`
+}
+
+export const MARKET_LABELS: Readonly<Record<FreightMarket, string>> = { normal: '通常期', peak: '繁忙期', surge: '高騰期' }
+
+const UNIT_TEXT: Readonly<Record<RatedAmount['unit'], (q: number) => string>> = {
+  container: (q) => `${q}本`,
+  rt: (q) => `${qty(q)} R/T`,
+  kg: (q) => `${kgText(Math.ceil(q))} kg`,
+}
+
+/** `¥15,000 × 7.26 R/T × 1.0（通常期）`, `¥18,000 ＋ ¥7,000 × 7.26 R/T`, `最低料金 ¥12,000`. */
+export function rateText(rated: RatedAmount, factor?: { value: number; label: string }): string {
+  const core = rated.minimum
+    ? `最低料金 ${yen(rated.amount)}`
+    : `${rated.base ? `${yen(rated.base)} ＋ ` : ''}${yen(rated.rate)} × ${UNIT_TEXT[rated.unit](rated.quantity)}`
+  return factor ? `${core} × ${factor.value.toFixed(1)}（${factor.label}）` : core
+}
+
+const PORT_LINE_LABELS: Readonly<Record<PortChargeKey, string>> = {
+  thc: 'THC',
+  vanning: 'バンニング',
+  seal: 'シール',
+  cfs: 'CFS',
+  lclThc: 'THC',
+  airHandling: '上屋・取扱・X線検査',
+  document: 'B/L・書類作成料',
+  filing: '事前申告（AMS / ENS 等）',
+}
+
+/** `CFS ¥5,000 × 7.26 R/T ＋ THC ¥1,500 × 7.26 R/T ＋ B/L・書類作成料 ¥6,500`. */
+export function portLinesText(lines: readonly PortChargeLine[], mode: ShippingMode): string {
+  return lines
+    .map((line) => {
+      const label = line.key === 'document' && mode === 'air' ? 'AWB 作成料' : PORT_LINE_LABELS[line.key]
+      if (line.key === 'airHandling') {
+        return `${label} ${line.rate}円 × ${UNIT_TEXT.kg(line.quantity)}（最低 ${yen(EXPORT_CHARGE_RATES.airMin)}）`
+      }
+      if (line.key === 'document' || line.key === 'filing') return `${label} ${yen(line.amount)}`
+      const unit = mode === 'lcl' ? UNIT_TEXT.rt(line.quantity) : UNIT_TEXT.container(line.quantity)
+      return `${label} ${yen(line.rate)} × ${unit}`
+    })
+    .join(' ＋ ')
 }
 
 /** The transport actually priced: 「LCL 混載（12.40 R/T）」「FCL 20ft Dry × 1本」「航空便（課金 2,100 kg）」. */
