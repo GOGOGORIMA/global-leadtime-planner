@@ -26,18 +26,27 @@
  *   &qcm=direct          概算M3 input: simple | direct | vanning
  *   &qsu=mm              size unit of the calculator     &qal=crate  packing allowance (none | carton | crate)
  *   &qi=110x110x100_6_300   calculator row `{L}x{W}x{H}_{pieces}_{kg per piece}` (repeatable, max 3)
+ *   &qpw=10pct / 120kg   packing materials by hand (% of the product weight or kg; default by the allowance)
  *   &qv=12.5 &qw=3200    direct entry: estimated volume (m³) / weight (kg)
  *   &qpc=0               no export packing cost           &qpr=18000  packing rate (JPY per m³)
+ *   &qpk=150000          export packing cost by hand (JPY)
  *   &qx=5000000          EXW base price (JPY)            &qcur=EUR   quote currency
  *   &qfx=172.5           market rate (JPY per unit)      &qfb=3      FX buffer (%)
- *   &qusd=150            JPY per USD for USD freight / charges (quote currency ≠ USD)
- *   &qdom=55000          domestic truck freight (JPY)    &qexp=99600 export charges (JPY)
+ *   &qusd=150            JPY per USD for amounts entered in USD (quote currency ≠ USD)
+ *   &qdom=55000          domestic truck freight (JPY)    &qcus=11800 export customs clearance (JPY)
+ *   &qport=99600         export port charges: THC / CFS / B/L / vanning (JPY)
  *   &qm=lcl              auto | fcl | lcl | air          &qdst=DE    destination country
- *   &qmk=peak            normal | peak | surge           &qfr=1800USD freight override (JPY | USD)
+ *   &qpod=west           port choice (US: west | east; default by the partner's time zone)
+ *   &qmk=peak            normal | peak | surge
+ *   &qof=1800USD         base freight (O/F) by hand      &qsc=450USD surcharges (BAF / LSS …) by hand
  *   &qcb=10              freight contingency (%)         &qins=0.2   insurance rate (%)
+ *   &qprem=12000         insurance premium by hand (JPY)
  *   &qloc=450USD         destination (DAP) charges       &qduty=5    import duty (%)
+ *   &qdamt=250000        import duty by hand (JPY)
  *   &qval=2027-01-15     quotation validity
  *   &qct=40hc.2          FCL containers override         &qtr=10t.1  domestic trucks override
+ * Older links: `qfr` (all-in freight) is read as base freight with no surcharges, `qexp` (customs +
+ * port charges) as port charges with no separate customs fee — the same totals as before.
  */
 import { isContainerId, type ContainerCategory } from '../data/containers'
 import { CURRENCY_INFO, DEFAULT_USD_RATE, isQuoteCurrency } from '../data/currencies'
@@ -57,7 +66,7 @@ import {
   type UnitCount,
 } from '../types'
 import { groupOverrideRanges } from './calendars'
-import type { SizeRow } from './incotermsCalc'
+import type { PackingWeightSetting, SizeRow } from './incotermsCalc'
 import { addDays, diffDays, isISODate, type ISODate, type OverrideKind } from './dateCalc'
 import { formatClock } from './timezone'
 import { sanitizeState } from '../state/plannerReducer'
@@ -72,23 +81,32 @@ const QUOTE_KEYS = [
   'qsu',
   'qi',
   'qal',
+  'qpw',
   'qpc',
   'qpr',
+  'qpk',
   'qx',
   'qcur',
   'qfx',
   'qfb',
   'qusd',
   'qdom',
+  'qcus',
+  'qport',
   'qexp',
   'qm',
   'qdst',
+  'qpod',
   'qmk',
+  'qof',
+  'qsc',
   'qfr',
   'qcb',
   'qins',
+  'qprem',
   'qloc',
   'qduty',
+  'qdamt',
   'qval',
   'qv',
   'qw',
@@ -174,25 +192,32 @@ function serializeQuote(q: QuoteSettings, params: URLSearchParams): void {
     for (const row of q.items) params.append('qi', `${row.length}x${row.width}x${row.height}_${row.quantity}_${row.weight}`)
   }
   set('qal', q.allowance, q.allowance === d.allowance)
+  set('qpw', q.packingWeight && `${q.packingWeight.value}${q.packingWeight.unit}`, false)
   set('qv', q.volume, q.volume === d.volume)
   set('qw', q.weight, q.weight === d.weight)
   set('qpc', q.packingCost ? '1' : '0', q.packingCost === d.packingCost)
   set('qpr', q.packingRate, q.packingRate === d.packingRate)
+  set('qpk', q.packingAmount, false)
   set('qx', q.exw, q.exw === d.exw)
   set('qcur', q.currency, q.currency === d.currency)
   set('qfx', q.fxRate, q.currency === 'JPY' || q.fxRate === CURRENCY_INFO[q.currency].defaultRate)
   set('qfb', q.fxBuffer, q.fxBuffer === d.fxBuffer)
   set('qusd', q.usdRate, q.usdRate === DEFAULT_USD_RATE)
   set('qdom', q.domestic, false)
-  set('qexp', q.exportCharges, false)
+  set('qcus', q.customs, false)
+  set('qport', q.portCharges, false)
   set('qm', q.mode, q.mode === d.mode)
   set('qdst', q.destination, !q.destination)
+  set('qpod', q.port, !q.port)
   set('qmk', q.market, q.market === d.market)
-  set('qfr', q.freight && moneyText(q.freight), false)
+  set('qof', q.freight && moneyText(q.freight), false)
+  set('qsc', q.surcharge && moneyText(q.surcharge), false)
   set('qcb', q.freightBuffer, q.freightBuffer === d.freightBuffer)
   set('qins', q.insuranceRate, q.insuranceRate === d.insuranceRate)
+  set('qprem', q.insurance, false)
   set('qloc', q.local && moneyText(q.local), false)
   set('qduty', q.dutyRate, q.dutyRate === d.dutyRate)
+  set('qdamt', q.duty, false)
   set('qval', q.validUntil, false)
   set('qct', q.container && unitsText(q.container), false)
   set('qtr', q.truck && unitsText(q.truck), false)
@@ -208,6 +233,12 @@ function parseMoney(value: string | null): MoneyAmount | null {
 function parseUnits(value: string | null): UnitCount | null {
   const [id, units] = (value ?? '').split('.')
   return isContainerId(id) ? { id, units: Number(units ?? 1) } : null
+}
+
+/** `10pct` / `120kg` → packing materials by hand. */
+function parsePackingWeight(value: string | null): PackingWeightSetting | null {
+  const m = /^(\d+(?:\.\d+)?)(pct|kg)$/i.exec(value ?? '')
+  return m ? { value: Number(m[1]), unit: m[2].toLowerCase() as PackingWeightSetting['unit'] } : null
 }
 
 /** `110x110x100_6_300` → size calculator row (sizes in the row unit, pieces, kg per piece). */
@@ -227,30 +258,40 @@ function parseQuote(params: URLSearchParams): Partial<QuoteSettings> {
   const currency = isQuoteCurrency(currencyParam) ? currencyParam : DEFAULT_QUOTE.currency
   const sizeUnit = params.get('qsu') === 'mm' ? 'mm' : 'cm'
   const rows = params.getAll('qi').map(parseSizeRow).filter((row): row is SizeRow => row !== null)
+  // Older links: `qfr` was the all-in freight and `qexp` customs + port charges together.
+  const legacyFreight = params.has('qof') || params.has('qsc') ? null : parseMoney(params.get('qfr'))
+  const legacyExport = params.has('qport') || params.has('qcus') ? null : num('qexp', null)
   return {
     cargoMode: (params.get('qcm') ?? DEFAULT_QUOTE.cargoMode) as QuoteSettings['cargoMode'],
     sizeUnit,
     items: rows.length ? rows : defaultQuoteRows(sizeUnit),
     allowance: (params.get('qal') ?? DEFAULT_QUOTE.allowance) as QuoteSettings['allowance'],
+    packingWeight: parsePackingWeight(params.get('qpw')),
     volume: num('qv', DEFAULT_QUOTE.volume) ?? DEFAULT_QUOTE.volume,
     weight: num('qw', DEFAULT_QUOTE.weight) ?? DEFAULT_QUOTE.weight,
     packingCost: params.has('qpc') ? params.get('qpc') !== '0' : DEFAULT_QUOTE.packingCost,
     packingRate: num('qpr', DEFAULT_QUOTE.packingRate) ?? DEFAULT_QUOTE.packingRate,
+    packingAmount: num('qpk', null),
     exw: num('qx', DEFAULT_QUOTE.exw) ?? DEFAULT_QUOTE.exw,
     currency,
     fxRate: num('qfx', CURRENCY_INFO[currency].defaultRate) ?? CURRENCY_INFO[currency].defaultRate,
     fxBuffer: num('qfb', DEFAULT_QUOTE.fxBuffer) ?? DEFAULT_QUOTE.fxBuffer,
     usdRate: num('qusd', DEFAULT_USD_RATE) ?? DEFAULT_USD_RATE,
     domestic: num('qdom', null),
-    exportCharges: num('qexp', null),
+    customs: legacyExport !== null ? 0 : num('qcus', null),
+    portCharges: legacyExport ?? num('qport', null),
     mode: (params.get('qm') ?? DEFAULT_QUOTE.mode) as QuoteSettings['mode'],
     destination: (params.get('qdst') ?? '').toUpperCase(),
+    port: (params.get('qpod') ?? '').toLowerCase(),
     market: (params.get('qmk') ?? DEFAULT_QUOTE.market) as QuoteSettings['market'],
-    freight: parseMoney(params.get('qfr')),
+    freight: legacyFreight ?? parseMoney(params.get('qof')),
+    surcharge: legacyFreight ? { amount: 0, currency: legacyFreight.currency } : parseMoney(params.get('qsc')),
     freightBuffer: num('qcb', DEFAULT_QUOTE.freightBuffer) ?? DEFAULT_QUOTE.freightBuffer,
     insuranceRate: num('qins', DEFAULT_QUOTE.insuranceRate) ?? DEFAULT_QUOTE.insuranceRate,
+    insurance: num('qprem', null),
     local: parseMoney(params.get('qloc')),
     dutyRate: num('qduty', DEFAULT_QUOTE.dutyRate) ?? DEFAULT_QUOTE.dutyRate,
+    duty: num('qdamt', null),
     validUntil: params.get('qval'),
     container: parseUnits(params.get('qct')),
     truck: parseUnits(params.get('qtr')),

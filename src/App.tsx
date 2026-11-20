@@ -10,6 +10,7 @@ import { tabButtonId, tabPanelId } from './components/tabIds'
 import { TabBar } from './components/TabBar'
 import { Timeline } from './components/Timeline'
 import { VanningPanel } from './components/VanningPanel'
+import { getDefaultTimeZone } from './data/countries'
 import { useNow } from './hooks/useNow'
 import { createFreshState, usePlanner } from './hooks/usePlanner'
 import { useStoredState } from './hooks/useStoredState'
@@ -17,7 +18,7 @@ import { CALENDAR_DAYS, type CountrySettings, type PlannerState, type PlannerTab
 import { buildCalendarMap, makeCalendarResolver, resolveSelectedCountries } from './utils/calendars'
 import { computeSchedule, type ISODate } from './utils/dateCalc'
 import { DEFAULT_EXPORT_OPTIONS } from './utils/exportText'
-import { resolveDestination } from './utils/quotation'
+import { resolveDestination, resolvePort } from './utils/quotation'
 import { buildScheduleReport } from './utils/report'
 import { STORAGE_KEYS } from './utils/storage'
 import { todayInTimeZone } from './utils/timezone'
@@ -58,6 +59,11 @@ export default function App() {
   // shared link always reproduces the same prices).
   const autoDestination = resolveDestination('', resolveRecipient('', state), partners)
   const quoteDestination = resolveDestination(quote.destination, autoDestination, partners)
+  // Port of destinations with several (US West / East Coast): the board's choice, else the coast of
+  // the partner's time zone (the left pane's setting, else the country's default zone).
+  const destinationTimeZone = countries.find((c) => c.code === quoteDestination)?.timeZone ?? getDefaultTimeZone(quoteDestination)
+  const autoPort = resolvePort('', quoteDestination, destinationTimeZone)
+  const quotePort = resolvePort(quote.port, quoteDestination, destinationTimeZone)
 
   const report = useMemo(
     () =>
@@ -159,6 +165,7 @@ export default function App() {
                 cushioning={cushioning}
                 quote={quote}
                 quoteDestination={quoteDestination}
+                quotePort={quotePort}
                 options={exportOptions}
                 onOptionsChange={setExportOptions}
                 onShowMeeting={() => setTab('meeting')}
@@ -178,6 +185,8 @@ export default function App() {
                 countries={countries}
                 destination={quoteDestination}
                 autoDestination={autoDestination}
+                port={quotePort}
+                autoPort={autoPort}
                 today={today}
                 report={report}
                 exportOptions={exportOptions}

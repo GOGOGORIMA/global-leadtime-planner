@@ -41,6 +41,8 @@ interface ExportPanelProps {
   /** Quotation board (tab ⑥) for the Price Quotation format / section. */
   quote: QuoteSettings
   quoteDestination: string
+  /** Resolved port choice of the destination (US West / East Coast; '' otherwise). */
+  quotePort: string
   options: ExportOptions
   onOptionsChange: (patch: Partial<ExportOptions>) => void
   /** Opens the meeting tab (会議可能時間帯). */
@@ -130,6 +132,7 @@ export function ExportPanel({
   cushioning,
   quote,
   quoteDestination,
+  quotePort,
   options,
   onOptionsChange,
   onShowMeeting,
@@ -179,11 +182,11 @@ export function ExportPanel({
     () =>
       isQuote || (options.includeQuote && !isMeeting)
         ? {
-            quote: buildQuotation(quote, cargo, container, cushioning, quoteDestination, today),
+            quote: buildQuotation(quote, cargo, container, cushioning, quoteDestination, today, quotePort),
             destinationName: getCountryInfo(quoteDestination).nameEn,
           }
         : null,
-    [isQuote, isMeeting, options.includeQuote, quote, cargo, container, cushioning, quoteDestination, today],
+    [isQuote, isMeeting, options.includeQuote, quote, cargo, container, cushioning, quoteDestination, quotePort, today],
   )
 
   const text = useMemo(() => {

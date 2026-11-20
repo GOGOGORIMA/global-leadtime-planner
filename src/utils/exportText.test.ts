@@ -255,7 +255,7 @@ describe('Incoterms Price Quotation', () => {
   const cargo = instantiateCargo(SAMPLE_CARGO)
   const cushioning = createDefaultState('2026-11-18').cushioning
   // The loading simulator's sample shipment without export packing (FCL 20ft to Thailand).
-  const quotation = (patch: Partial<typeof DEFAULT_QUOTE> = {}, destination = 'TH', destinationName = 'Thailand'): QuotationText => ({
+  const quotation = (patch: Partial<typeof DEFAULT_QUOTE> = {}, destination = 'TH', destinationName = 'Thailand', port = ''): QuotationText => ({
     quote: buildQuotation(
       { ...DEFAULT_QUOTE, cargoMode: 'vanning', packingCost: false, ...patch },
       cargo,
@@ -263,6 +263,7 @@ describe('Incoterms Price Quotation', () => {
       cushioning,
       destination,
       '2026-11-18',
+      port,
     ),
     destinationName,
   })
@@ -276,9 +277,9 @@ describe('Incoterms Price Quotation', () => {
       [
         'PRICE QUOTATION (USD)',
         '- EXW Japan (Ex Works): USD 34,364.26',
-        '- FOB Japanese port (Free On Board): USD 35,426.80',
-        '- CIF Laem Chabang, Thailand (Cost, Insurance and Freight): USD 35,902.69',
-        '- DDP your premises, Thailand (Delivered Duty Paid): USD 38,110.20',
+        '- FOB Japanese port (Free On Board): USD 35,465.98',
+        '- CIF Laem Chabang, Thailand (Cost, Insurance and Freight): USD 36,983.77',
+        '- DDP your premises, Thailand (Delivered Duty Paid): USD 39,348.43',
       ].join('\n'),
     )
     expect(text).not.toContain('DAP')
@@ -320,6 +321,12 @@ describe('Incoterms Price Quotation', () => {
     expect(packed).toContain('- Estimated Volume: 7.3 CBM / Gross Weight: 1,800 kg (6 packages)')
     expect(packed).toContain('- Export packing (crates / pallets) is included in the EXW price')
     expect(packed).toContain('- EXW Japan (Ex Works): USD 35,112.71')
+    // Pallets add 15 % volume and 8 % weight: the gross weight is the packed weight.
+    const pallets = renderQuotationEmail(options(), quotation({ cargoMode: 'simple', allowance: 'carton' }, 'KR', 'South Korea'))
+    expect(pallets).toContain('- Estimated Volume: 8.3 CBM / Gross Weight: 1,944 kg (6 packages)')
+    // The US port follows the chosen coast.
+    const east = renderQuotationEmail(options(), quotation({ cargoMode: 'direct', volume: 20, weight: 4000 }, 'US', 'United States', 'east'))
+    expect(east).toContain('- CIF New York / Savannah, United States (Cost, Insurance and Freight)')
   })
 
   it('inserts the quotation into the standard e-mail and WhatsApp only when requested', () => {
@@ -330,9 +337,9 @@ describe('Incoterms Price Quotation', () => {
     expect(section.trim().split('\n').slice(0, 8)).toEqual([
       'INCOTERMS PRICE QUOTATION (USD, Incoterms® 2020)',
       '- EXW Japan: USD 34,364.26',
-      '- FOB Japanese port: USD 35,426.80',
-      '- CIF Laem Chabang, Thailand: USD 35,902.69',
-      '- DDP your premises, Thailand: USD 38,110.20',
+      '- FOB Japanese port: USD 35,465.98',
+      '- CIF Laem Chabang, Thailand: USD 36,983.77',
+      '- DDP your premises, Thailand: USD 39,348.43',
       '- Estimated Volume: 15.5 CBM / Gross Weight: 3,160 kg (31 packages)',
       '- Basis: Sea freight (FCL), 1 × 20ft Dry container; USD 1 = JPY 145.50',
       '- DDP includes import duty estimated at 5% of the CIF value',
@@ -344,9 +351,9 @@ describe('Incoterms Price Quotation', () => {
       [
         '*Price quotation* (USD, Incoterms® 2020)',
         'EXW Japan: *USD 34,364.26*',
-        'FOB Japanese port: *USD 35,426.80*',
-        'CIF Laem Chabang, Thailand: *USD 35,902.69*',
-        'DDP your premises, Thailand: *USD 38,110.20*',
+        'FOB Japanese port: *USD 35,465.98*',
+        'CIF Laem Chabang, Thailand: *USD 36,983.77*',
+        'DDP your premises, Thailand: *USD 39,348.43*',
         '📐 Estimated Volume: 15.5 CBM / Gross Weight: 3,160 kg',
         '🚢 FCL 1 × 20ft Dry',
         '⏳ Valid until 2 Dec 2026 – freight subject to change',

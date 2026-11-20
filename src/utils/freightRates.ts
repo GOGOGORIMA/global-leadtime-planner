@@ -1,10 +1,21 @@
 /**
- * Indicative logistics rates for the export quotation board (tab ⑥).
+ * Indicative logistics rates for the export quotation board (tab ⑥) — every amount in JPY.
  *
  * Origin: Japanese main ports / airports (Tokyo, Yokohama, Nagoya, Osaka, Kobe / Narita, Haneda,
- * Kansai). Every value is a rough "normal market" planning level — actual quotes vary with the
- * carrier, the port pair, the season and the cargo. The board multiplies the base freight by the
- * market level (通常期 1.0x / 繁忙期 1.5x / 高騰期 2.5x) and every amount can be overwritten.
+ * Kansai). Values are "normal market" (通常期) planning levels, deliberately not optimistic: sea and
+ * air freight include the carriers' surcharges (BAF / LSS / EBS …, air: fuel / security), and the
+ * origin charges (customs, THC, CFS, B/L, vanning …) and destination charges are added separately.
+ * The board multiplies the table freight by the market level (1.0x / 1.5x / 2.5x) and every amount
+ * can be overwritten with a forwarder's actual quote.
+ *
+ * Planning bands (min–max per unit, normal market) the lanes are calibrated to:
+ *
+ *   near Asia (KR, CN …)        LCL ¥18,000–28,000 per R/T incl. the origin CFS / THC
+ *                               20ft ¥120,000–180,000, 40ft / HQ ¥190,000–280,000
+ *   South Asia (IN …)           LCL ¥28,000–45,000, 20ft ¥250,000–420,000, 40ft / HQ ¥380,000–620,000
+ *   North America / Europe      LCL ¥35,000–55,000, 20ft ¥450,000–750,000, 40ft / HQ ¥650,000–1,050,000
+ *                               (US East Coast and Europe at the upper end)
+ *   Air                         Asia ¥600–1,100 / kg, North America / Europe ¥1,300–2,200 / kg
  *
  * Pure data + pure functions (no Date / Intl / global state).
  */
@@ -26,7 +37,7 @@ export function isQuoteMode(value: unknown): value is QuoteMode {
   return typeof value === 'string' && (QUOTE_MODES as readonly string[]).includes(value)
 }
 
-/** Freight market level (市況): applied as a factor to the base freight of the table. */
+/** Freight market level (市況): applied as a factor to the table freight. */
 export const FREIGHT_MARKETS = ['normal', 'peak', 'surge'] as const
 export type FreightMarket = (typeof FREIGHT_MARKETS)[number]
 
@@ -39,8 +50,11 @@ export const MARKET_FACTORS: Readonly<Record<FreightMarket, number>> = { normal:
 /** Country the board quotes from (the freight table starts in Japan). */
 export const FREIGHT_ORIGIN = 'JP'
 
-/** Minimum air freight per shipment (USD, before the market factor). */
-export const AIR_MIN_CHARGE_USD = 80
+/**
+ * Share of the table freight shown as surcharges (BAF / LSS / EBS …, air: fuel / security) next to
+ * the base freight (O/F). Both parts can be overwritten separately, like the lines of a forwarder's quote.
+ */
+export const SURCHARGE_SHARE = 0.3
 
 export type FreightRegion =
   | 'eastAsia'
@@ -67,16 +81,35 @@ export const FREIGHT_REGION_LABELS: Readonly<Record<FreightRegion, string>> = {
   oceania: 'オセアニア',
 }
 
+/** Sea / air freight per unit (JPY, normal market). */
 export interface FreightRates {
-  /** Ocean freight per container (USD; base rate incl. BAF, excl. origin / destination charges). */
+  /** Sea freight per container incl. surcharges, excl. origin / destination charges. */
   fcl20: number
   fcl40: number
-  /** 40ft High Cube: 40ft + US$50 within Asia, + US$100 on the other trades. */
   fcl40hc: number
-  /** LCL ocean freight per revenue ton (USD / R/T, W/M). */
+  /** LCL sea freight incl. surcharges per revenue ton (W/M), excl. the origin CFS / THC. */
   lcl: number
-  /** Air freight per chargeable kg (USD, incl. fuel / security surcharges, +100 kg break). */
+  /** Air freight per chargeable kg incl. fuel / security surcharges. */
   air: number
+}
+
+/** Planning band of a trade: min–max per unit (JPY, normal market). */
+export interface RateBand {
+  /** LCL per R/T including the origin CFS / THC. */
+  lcl: readonly [number, number]
+  fcl20: readonly [number, number]
+  /** 40ft Dry and 40ft HQ. */
+  fcl40: readonly [number, number]
+  /** Air per chargeable kg. */
+  air: readonly [number, number]
+}
+
+/** A representative port to choose from (US West / East Coast). */
+export interface PortOption {
+  id: string
+  /** Japanese label of the choice, e.g. 西海岸. */
+  label: string
+  port: string
 }
 
 export interface FreightLane extends FreightRates {
@@ -85,65 +118,117 @@ export interface FreightLane extends FreightRates {
   port?: string
   /** `true` when no dedicated lane exists and the region's estimate is used. */
   estimated: boolean
+  /** Planning band of the trade (the table rates sit inside it). */
+  band: RateBand
+  /** Port choices of the destination (empty when it has one representative port) and the one used. */
+  ports: readonly PortOption[]
+  portId: string
 }
 
-/** Dedicated lanes from Japan (normal market). */
-const LANES: Readonly<Record<string, FreightRates & { port: string }>> = {
-  KR: { port: 'Busan', fcl20: 200, fcl40: 350, fcl40hc: 400, lcl: 15, air: 2.2 },
-  CN: { port: 'Shanghai', fcl20: 250, fcl40: 450, fcl40hc: 500, lcl: 15, air: 2.5 },
-  TW: { port: 'Keelung / Kaohsiung', fcl20: 280, fcl40: 500, fcl40hc: 550, lcl: 25, air: 2.4 },
-  HK: { port: 'Hong Kong', fcl20: 300, fcl40: 550, fcl40hc: 600, lcl: 25, air: 2.6 },
-  MN: { port: 'Ulaanbaatar (via Tianjin)', fcl20: 1800, fcl40: 3000, fcl40hc: 3100, lcl: 120, air: 4.5 },
-  TH: { port: 'Laem Chabang', fcl20: 350, fcl40: 650, fcl40hc: 700, lcl: 30, air: 2.8 },
-  VN: { port: 'Ho Chi Minh City / Haiphong', fcl20: 350, fcl40: 650, fcl40hc: 700, lcl: 30, air: 2.8 },
-  SG: { port: 'Singapore', fcl20: 300, fcl40: 550, fcl40hc: 600, lcl: 25, air: 2.6 },
-  MY: { port: 'Port Klang', fcl20: 380, fcl40: 700, fcl40hc: 750, lcl: 30, air: 2.8 },
-  ID: { port: 'Jakarta', fcl20: 450, fcl40: 800, fcl40hc: 850, lcl: 35, air: 3 },
-  PH: { port: 'Manila', fcl20: 450, fcl40: 800, fcl40hc: 850, lcl: 35, air: 3 },
-  IN: { port: 'Nhava Sheva / Chennai', fcl20: 800, fcl40: 1400, fcl40hc: 1500, lcl: 55, air: 3.8 },
-  PK: { port: 'Karachi', fcl20: 1000, fcl40: 1700, fcl40hc: 1800, lcl: 65, air: 4.2 },
-  BD: { port: 'Chittagong', fcl20: 1000, fcl40: 1800, fcl40hc: 1900, lcl: 65, air: 4.2 },
-  LK: { port: 'Colombo', fcl20: 800, fcl40: 1400, fcl40hc: 1500, lcl: 55, air: 3.8 },
-  AE: { port: 'Jebel Ali', fcl20: 1200, fcl40: 2000, fcl40hc: 2100, lcl: 65, air: 4.2 },
-  SA: { port: 'Dammam / Jeddah', fcl20: 1400, fcl40: 2400, fcl40hc: 2500, lcl: 75, air: 4.5 },
-  US: { port: 'Los Angeles / Long Beach', fcl20: 1700, fcl40: 2200, fcl40hc: 2300, lcl: 75, air: 4.8 },
-  CA: { port: 'Vancouver', fcl20: 1800, fcl40: 2400, fcl40hc: 2500, lcl: 80, air: 5 },
-  MX: { port: 'Manzanillo', fcl20: 1900, fcl40: 2800, fcl40hc: 2900, lcl: 95, air: 5.5 },
-  BR: { port: 'Santos', fcl20: 2600, fcl40: 4200, fcl40hc: 4300, lcl: 130, air: 7 },
-  CL: { port: 'San Antonio', fcl20: 2300, fcl40: 3800, fcl40hc: 3900, lcl: 120, air: 6.5 },
-  PE: { port: 'Callao', fcl20: 2200, fcl40: 3600, fcl40hc: 3700, lcl: 115, air: 6.5 },
-  CO: { port: 'Buenaventura / Cartagena', fcl20: 2400, fcl40: 3900, fcl40hc: 4000, lcl: 120, air: 6.5 },
-  AR: { port: 'Buenos Aires', fcl20: 2800, fcl40: 4500, fcl40hc: 4600, lcl: 140, air: 7.5 },
-  DE: { port: 'Hamburg', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 },
-  NL: { port: 'Rotterdam', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 },
-  BE: { port: 'Antwerp', fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 80, air: 4.8 },
-  GB: { port: 'Felixstowe / Southampton', fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 4.8 },
-  FR: { port: 'Le Havre', fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 4.8 },
-  IT: { port: 'Genoa', fcl20: 1700, fcl40: 3000, fcl40hc: 3100, lcl: 90, air: 4.8 },
-  ES: { port: 'Valencia / Barcelona', fcl20: 1700, fcl40: 3000, fcl40hc: 3100, lcl: 90, air: 4.8 },
-  PL: { port: 'Gdansk', fcl20: 1700, fcl40: 2900, fcl40hc: 3000, lcl: 90, air: 5 },
-  TR: { port: 'Istanbul / Mersin', fcl20: 1800, fcl40: 3100, fcl40hc: 3200, lcl: 95, air: 5 },
-  RU: { port: 'Vladivostok', fcl20: 1500, fcl40: 2500, fcl40hc: 2600, lcl: 90, air: 6 },
-  ZA: { port: 'Durban', fcl20: 2200, fcl40: 3600, fcl40hc: 3700, lcl: 110, air: 6 },
-  EG: { port: 'Alexandria / Port Said', fcl20: 1900, fcl40: 3200, fcl40hc: 3300, lcl: 100, air: 5.5 },
-  KE: { port: 'Mombasa', fcl20: 2400, fcl40: 3900, fcl40hc: 4000, lcl: 120, air: 6 },
-  NG: { port: 'Lagos (Apapa)', fcl20: 2800, fcl40: 4600, fcl40hc: 4700, lcl: 140, air: 7 },
-  AU: { port: 'Sydney / Melbourne', fcl20: 900, fcl40: 1600, fcl40hc: 1700, lcl: 60, air: 4 },
-  NZ: { port: 'Auckland', fcl20: 1100, fcl40: 1900, fcl40hc: 2000, lcl: 70, air: 4.5 },
+type LaneData = FreightRates & { port: string; band?: RateBand }
+
+const band = (lcl: [number, number], fcl20: [number, number], fcl40: [number, number], air: [number, number]): RateBand => ({
+  lcl,
+  fcl20,
+  fcl40,
+  air,
+})
+
+/** Planning bands of the regions (main ports; the user's reference levels for KR / CN, IN, US / GB / DE). */
+const REGION_BANDS: Readonly<Record<FreightRegion, RateBand>> = {
+  eastAsia: band([18_000, 28_000], [120_000, 180_000], [190_000, 280_000], [600, 1_100]),
+  southeastAsia: band([22_000, 35_000], [160_000, 260_000], [250_000, 400_000], [700, 1_100]),
+  southAsia: band([28_000, 45_000], [250_000, 420_000], [380_000, 620_000], [700, 1_100]),
+  middleEast: band([30_000, 48_000], [300_000, 520_000], [480_000, 800_000], [900, 1_500]),
+  europe: band([35_000, 55_000], [450_000, 750_000], [650_000, 1_050_000], [1_300, 2_200]),
+  russiaCis: band([35_000, 60_000], [400_000, 800_000], [600_000, 1_200_000], [1_300, 2_400]),
+  northAmerica: band([35_000, 55_000], [450_000, 750_000], [650_000, 1_050_000], [1_300, 2_200]),
+  latinAmerica: band([45_000, 70_000], [600_000, 1_000_000], [900_000, 1_500_000], [1_800, 2_800]),
+  africa: band([45_000, 70_000], [600_000, 1_050_000], [900_000, 1_550_000], [1_800, 2_800]),
+  oceania: band([30_000, 50_000], [280_000, 650_000], [450_000, 950_000], [1_000, 2_000]),
 }
 
-/** Estimates for the other countries of each region (smaller / less served markets cost more). */
+/** US West Coast (default where the partner works on Pacific / Mountain time) and East Coast. */
+const US_WEST: LaneData = { port: 'Los Angeles / Long Beach', fcl20: 500_000, fcl40: 700_000, fcl40hc: 720_000, lcl: 32_500, air: 1_500 }
+const US_EAST: LaneData = { port: 'New York / Savannah', fcl20: 700_000, fcl40: 990_000, fcl40hc: 1_010_000, lcl: 45_500, air: 1_700 }
+
+/** Dedicated lanes from Japan (normal market, JPY). LCL excludes the origin CFS / THC (¥6,500 per R/T). */
+const LANES: Readonly<Record<string, LaneData>> = {
+  KR: { port: 'Busan', fcl20: 140_000, fcl40: 215_000, fcl40hc: 225_000, lcl: 15_000, air: 650 },
+  CN: { port: 'Shanghai', fcl20: 150_000, fcl40: 230_000, fcl40hc: 240_000, lcl: 16_000, air: 700 },
+  TW: { port: 'Keelung / Kaohsiung', fcl20: 160_000, fcl40: 245_000, fcl40hc: 255_000, lcl: 17_500, air: 750 },
+  HK: { port: 'Hong Kong', fcl20: 160_000, fcl40: 245_000, fcl40hc: 255_000, lcl: 17_500, air: 750 },
+  MN: {
+    port: 'Ulaanbaatar (via Tianjin)',
+    fcl20: 560_000,
+    fcl40: 860_000,
+    fcl40hc: 880_000,
+    lcl: 42_000,
+    air: 1_300,
+    // Landlocked: sea to Tianjin and rail to Ulaanbaatar.
+    band: band([40_000, 65_000], [450_000, 700_000], [700_000, 1_050_000], [1_100, 1_600]),
+  },
+  TH: { port: 'Laem Chabang', fcl20: 190_000, fcl40: 295_000, fcl40hc: 305_000, lcl: 19_500, air: 800 },
+  VN: { port: 'Ho Chi Minh City / Haiphong', fcl20: 190_000, fcl40: 295_000, fcl40hc: 305_000, lcl: 19_500, air: 800 },
+  SG: { port: 'Singapore', fcl20: 175_000, fcl40: 275_000, fcl40hc: 285_000, lcl: 18_000, air: 750 },
+  MY: { port: 'Port Klang', fcl20: 200_000, fcl40: 310_000, fcl40hc: 320_000, lcl: 20_500, air: 820 },
+  ID: { port: 'Jakarta', fcl20: 220_000, fcl40: 340_000, fcl40hc: 350_000, lcl: 22_500, air: 880 },
+  PH: { port: 'Manila', fcl20: 220_000, fcl40: 340_000, fcl40hc: 350_000, lcl: 22_500, air: 880 },
+  IN: { port: 'Nhava Sheva / Chennai', fcl20: 330_000, fcl40: 500_000, fcl40hc: 515_000, lcl: 29_500, air: 950 },
+  PK: { port: 'Karachi', fcl20: 380_000, fcl40: 570_000, fcl40hc: 585_000, lcl: 33_500, air: 1_050 },
+  BD: { port: 'Chittagong', fcl20: 390_000, fcl40: 585_000, fcl40hc: 600_000, lcl: 34_500, air: 1_050 },
+  LK: { port: 'Colombo', fcl20: 300_000, fcl40: 460_000, fcl40hc: 475_000, lcl: 27_500, air: 950 },
+  AE: { port: 'Jebel Ali', fcl20: 360_000, fcl40: 560_000, fcl40hc: 575_000, lcl: 29_500, air: 1_100 },
+  SA: { port: 'Dammam / Jeddah', fcl20: 420_000, fcl40: 650_000, fcl40hc: 665_000, lcl: 33_500, air: 1_250 },
+  US: US_WEST,
+  CA: { port: 'Vancouver', fcl20: 520_000, fcl40: 730_000, fcl40hc: 750_000, lcl: 34_500, air: 1_550 },
+  MX: { port: 'Manzanillo', fcl20: 620_000, fcl40: 900_000, fcl40hc: 920_000, lcl: 40_500, air: 1_800 },
+  BR: { port: 'Santos', fcl20: 820_000, fcl40: 1_230_000, fcl40hc: 1_250_000, lcl: 55_500, air: 2_400 },
+  CL: { port: 'San Antonio', fcl20: 760_000, fcl40: 1_140_000, fcl40hc: 1_160_000, lcl: 51_500, air: 2_200 },
+  PE: { port: 'Callao', fcl20: 740_000, fcl40: 1_110_000, fcl40hc: 1_130_000, lcl: 50_500, air: 2_200 },
+  CO: { port: 'Buenaventura / Cartagena', fcl20: 780_000, fcl40: 1_170_000, fcl40hc: 1_190_000, lcl: 52_500, air: 2_250 },
+  AR: { port: 'Buenos Aires', fcl20: 880_000, fcl40: 1_320_000, fcl40hc: 1_340_000, lcl: 58_500, air: 2_500 },
+  DE: { port: 'Hamburg', fcl20: 620_000, fcl40: 880_000, fcl40hc: 900_000, lcl: 39_500, air: 1_700 },
+  NL: { port: 'Rotterdam', fcl20: 620_000, fcl40: 880_000, fcl40hc: 900_000, lcl: 39_500, air: 1_700 },
+  BE: { port: 'Antwerp', fcl20: 620_000, fcl40: 880_000, fcl40hc: 900_000, lcl: 39_500, air: 1_700 },
+  GB: { port: 'Felixstowe / Southampton', fcl20: 640_000, fcl40: 910_000, fcl40hc: 930_000, lcl: 41_500, air: 1_750 },
+  FR: { port: 'Le Havre', fcl20: 640_000, fcl40: 910_000, fcl40hc: 930_000, lcl: 41_500, air: 1_750 },
+  IT: { port: 'Genoa', fcl20: 670_000, fcl40: 950_000, fcl40hc: 970_000, lcl: 43_500, air: 1_800 },
+  ES: { port: 'Valencia / Barcelona', fcl20: 670_000, fcl40: 950_000, fcl40hc: 970_000, lcl: 43_500, air: 1_800 },
+  PL: { port: 'Gdansk', fcl20: 660_000, fcl40: 940_000, fcl40hc: 960_000, lcl: 43_500, air: 1_800 },
+  TR: { port: 'Istanbul / Mersin', fcl20: 690_000, fcl40: 990_000, fcl40hc: 1_010_000, lcl: 45_500, air: 1_850 },
+  RU: { port: 'Vladivostok', fcl20: 450_000, fcl40: 680_000, fcl40hc: 700_000, lcl: 36_500, air: 1_600 },
+  ZA: { port: 'Durban', fcl20: 720_000, fcl40: 1_070_000, fcl40hc: 1_090_000, lcl: 49_500, air: 2_100 },
+  EG: { port: 'Alexandria / Port Said', fcl20: 650_000, fcl40: 960_000, fcl40hc: 980_000, lcl: 45_500, air: 1_900 },
+  KE: { port: 'Mombasa', fcl20: 780_000, fcl40: 1_160_000, fcl40hc: 1_180_000, lcl: 53_500, air: 2_300 },
+  NG: { port: 'Lagos (Apapa)', fcl20: 920_000, fcl40: 1_380_000, fcl40hc: 1_400_000, lcl: 59_500, air: 2_600 },
+  AU: { port: 'Sydney / Melbourne', fcl20: 320_000, fcl40: 500_000, fcl40hc: 515_000, lcl: 27_500, air: 1_200 },
+  NZ: { port: 'Auckland', fcl20: 380_000, fcl40: 590_000, fcl40hc: 605_000, lcl: 31_500, air: 1_350 },
+}
+
+/** Destinations with more than one representative port (the user can choose; see {@link autoPortId}). */
+const PORT_VARIANTS: Readonly<Record<string, ReadonlyArray<{ id: string; label: string; lane: LaneData }>>> = {
+  US: [
+    { id: 'west', label: '西海岸', lane: US_WEST },
+    { id: 'east', label: '東海岸', lane: US_EAST },
+  ],
+}
+
+/** Port choice ids of every destination (for the URL sanitizer). */
+export const PORT_IDS: ReadonlySet<string> = new Set(Object.values(PORT_VARIANTS).flatMap((variants) => variants.map((v) => v.id)))
+
+/** Estimates for the other countries of each region (upper part of the band: smaller markets cost more). */
 const REGION_RATES: Readonly<Record<FreightRegion, FreightRates>> = {
-  eastAsia: { fcl20: 400, fcl40: 700, fcl40hc: 750, lcl: 35, air: 3 },
-  southeastAsia: { fcl20: 600, fcl40: 1100, fcl40hc: 1150, lcl: 45, air: 3.5 },
-  southAsia: { fcl20: 1500, fcl40: 2600, fcl40hc: 2700, lcl: 90, air: 5 },
-  middleEast: { fcl20: 1600, fcl40: 2800, fcl40hc: 2900, lcl: 85, air: 5 },
-  europe: { fcl20: 1900, fcl40: 3300, fcl40hc: 3400, lcl: 100, air: 5.2 },
-  russiaCis: { fcl20: 2500, fcl40: 4000, fcl40hc: 4100, lcl: 130, air: 6.5 },
-  northAmerica: { fcl20: 2800, fcl40: 4200, fcl40hc: 4300, lcl: 130, air: 6 },
-  latinAmerica: { fcl20: 3000, fcl40: 4800, fcl40hc: 4900, lcl: 150, air: 7.5 },
-  africa: { fcl20: 3000, fcl40: 5000, fcl40hc: 5100, lcl: 150, air: 7.5 },
-  oceania: { fcl20: 2000, fcl40: 3500, fcl40hc: 3600, lcl: 120, air: 6 },
+  eastAsia: { fcl20: 175_000, fcl40: 270_000, fcl40hc: 280_000, lcl: 20_500, air: 1_000 },
+  southeastAsia: { fcl20: 250_000, fcl40: 385_000, fcl40hc: 395_000, lcl: 27_000, air: 1_050 },
+  southAsia: { fcl20: 410_000, fcl40: 600_000, fcl40hc: 615_000, lcl: 37_500, air: 1_100 },
+  middleEast: { fcl20: 490_000, fcl40: 760_000, fcl40hc: 775_000, lcl: 39_500, air: 1_450 },
+  europe: { fcl20: 720_000, fcl40: 1_020_000, fcl40hc: 1_040_000, lcl: 47_500, air: 2_100 },
+  russiaCis: { fcl20: 760_000, fcl40: 1_140_000, fcl40hc: 1_160_000, lcl: 51_500, air: 2_300 },
+  northAmerica: { fcl20: 720_000, fcl40: 1_020_000, fcl40hc: 1_040_000, lcl: 47_500, air: 2_100 },
+  latinAmerica: { fcl20: 950_000, fcl40: 1_420_000, fcl40hc: 1_440_000, lcl: 61_500, air: 2_700 },
+  africa: { fcl20: 1_000_000, fcl40: 1_500_000, fcl40hc: 1_520_000, lcl: 62_500, air: 2_750 },
+  oceania: { fcl20: 600_000, fcl40: 900_000, fcl40hc: 920_000, lcl: 41_500, air: 1_900 },
 }
 
 /** Freight region of every destination (ISO 3166-1 alpha-2). */
@@ -182,15 +267,48 @@ export function hasDedicatedLane(country: string): boolean {
 /** Countries with a dedicated lane, in table order (grouped by region). */
 export const DEDICATED_LANE_COUNTRIES: readonly string[] = Object.keys(LANES)
 
+/** IANA zones on the US West Coast side (Pacific / Mountain / Alaska / Hawaii) → West Coast ports. */
+const US_WEST_ZONES: ReadonlySet<string> = new Set([
+  'America/Los_Angeles',
+  'America/Denver',
+  'America/Boise',
+  'America/Phoenix',
+  'America/Anchorage',
+  'America/Juneau',
+  'America/Sitka',
+  'America/Nome',
+  'America/Yakutat',
+  'America/Metlakatla',
+  'America/Adak',
+  'Pacific/Honolulu',
+])
+
 /**
- * Rates from Japan to `country`: its dedicated lane, else the region estimate. Countries outside
- * the region map (none in the catalog) use the most conservative region estimate (Africa).
+ * Port used when none is chosen: for the United States the coast of the partner's time zone (Pacific /
+ * Mountain → West Coast, otherwise the dearer East Coast); '' for destinations with one port.
  */
-export function getFreightLane(country: string): FreightLane {
-  const lane = LANES[country]
+export function autoPortId(country: string, timeZone?: string): string {
+  const variants = PORT_VARIANTS[country]
+  if (!variants) return ''
+  if (country === 'US') return timeZone && US_WEST_ZONES.has(timeZone) ? 'west' : 'east'
+  return variants[0].id
+}
+
+/**
+ * Rates from Japan to `country` (its dedicated lane — at the chosen port — else the region estimate).
+ * Countries outside the region map (none in the catalog) use the most conservative region (Africa).
+ */
+export function getFreightLane(country: string, portId = ''): FreightLane {
   const region = REGION_BY_COUNTRY.get(country) ?? 'africa'
-  if (lane) return { ...lane, region, estimated: false }
-  return { ...REGION_RATES[region], region, estimated: true }
+  const variants = PORT_VARIANTS[country]
+  const variant = variants ? (variants.find((v) => v.id === portId) ?? variants.find((v) => v.id === autoPortId(country)) ?? variants[0]) : undefined
+  const ports = variants ? variants.map((v) => ({ id: v.id, label: v.label, port: v.lane.port })) : []
+  const lane = variant?.lane ?? LANES[country]
+  if (lane) {
+    const { band: laneBand, ...rates } = lane
+    return { ...rates, region, estimated: false, band: laneBand ?? REGION_BANDS[region], ports, portId: variant?.id ?? '' }
+  }
+  return { ...REGION_RATES[region], region, estimated: true, band: REGION_BANDS[region], ports, portId: '' }
 }
 
 export type ContainerSize = '20' | '40'
@@ -200,13 +318,13 @@ export function containerSize(id: ContainerId): ContainerSize {
   return id === '20dc' ? '20' : '40'
 }
 
-/** Quantity × rate of a freight / charge amount (USD or JPY). */
+/** Quantity × rate of a freight / charge amount (JPY). */
 export interface RatedAmount {
   rate: number
   quantity: number
   /** `container` = per container, `rt` = per revenue ton, `kg` = per chargeable kg. */
   unit: 'container' | 'rt' | 'kg'
-  /** Fixed part per shipment (local charges), 0 if none. */
+  /** Fixed part per shipment (destination charges), 0 if none. */
   base: number
   /** `true` when a minimum charge replaced rate × quantity. */
   minimum: boolean
@@ -224,8 +342,15 @@ export interface FreightBasis {
   chargeableKg: number
 }
 
-/** Base international freight (USD, normal market — multiply by the market factor). */
-export function baseFreightUsd(lane: FreightRates, basis: FreightBasis): RatedAmount {
+/** Air freight minimum per shipment (JPY): within Asia, and on the long-haul trades. */
+const ASIA_REGIONS: ReadonlySet<FreightRegion> = new Set(['eastAsia', 'southeastAsia', 'southAsia'])
+
+export function airMinimumJpy(region: FreightRegion): number {
+  return ASIA_REGIONS.has(region) ? 12_000 : 18_000
+}
+
+/** Table freight incl. surcharges (JPY, normal market — multiply by the market factor). */
+export function tableFreightJpy(lane: FreightLane, basis: FreightBasis): RatedAmount {
   switch (basis.mode) {
     case 'fcl': {
       const rate = basis.container === '20dc' ? lane.fcl20 : basis.container === '40hc' ? lane.fcl40hc : lane.fcl40
@@ -238,48 +363,47 @@ export function baseFreightUsd(lane: FreightRates, basis: FreightBasis): RatedAm
         unit: 'rt',
         base: 0,
         minimum: false,
-        amount: lane.lcl * basis.revenueTons,
+        amount: Math.round(lane.lcl * basis.revenueTons),
       }
     case 'air': {
-      const amount = lane.air * basis.chargeableKg
-      const minimum = amount < AIR_MIN_CHARGE_USD
-      return {
-        rate: lane.air,
-        quantity: basis.chargeableKg,
-        unit: 'kg',
-        base: 0,
-        minimum,
-        amount: minimum ? AIR_MIN_CHARGE_USD : amount,
-      }
+      const amount = Math.round(lane.air * basis.chargeableKg)
+      const min = airMinimumJpy(lane.region)
+      return { rate: lane.air, quantity: basis.chargeableKg, unit: 'kg', base: 0, minimum: amount < min, amount: Math.max(amount, min) }
     }
   }
 }
 
-/** Destination charges (DAP): terminal handling, D/O, import clearance and delivery (USD). */
+/** Splits freight into base freight (O/F) and surcharges ({@link SURCHARGE_SHARE}). */
+export function splitFreight(totalJpy: number): { base: number; surcharge: number } {
+  const surcharge = Math.round(totalJpy * SURCHARGE_SHARE)
+  return { base: totalJpy - surcharge, surcharge }
+}
+
+/** Destination charges (DAP): terminal handling, D/O, import clearance and delivery (JPY). */
 interface LocalChargeRates {
   fcl20: number
   fcl40: number
-  lclPerRt: number
   lclBase: number
-  airPerKg: number
+  lclPerRt: number
   airBase: number
+  airPerKg: number
 }
 
 const LOCAL_CHARGES: Readonly<Record<FreightRegion, LocalChargeRates>> = {
-  eastAsia: { fcl20: 380, fcl40: 520, lclPerRt: 40, lclBase: 90, airPerKg: 0.3, airBase: 90 },
-  southeastAsia: { fcl20: 400, fcl40: 550, lclPerRt: 40, lclBase: 90, airPerKg: 0.3, airBase: 90 },
-  southAsia: { fcl20: 450, fcl40: 620, lclPerRt: 45, lclBase: 110, airPerKg: 0.35, airBase: 110 },
-  middleEast: { fcl20: 550, fcl40: 750, lclPerRt: 50, lclBase: 120, airPerKg: 0.4, airBase: 120 },
-  europe: { fcl20: 950, fcl40: 1250, lclPerRt: 70, lclBase: 160, airPerKg: 0.55, airBase: 160 },
-  russiaCis: { fcl20: 850, fcl40: 1150, lclPerRt: 65, lclBase: 150, airPerKg: 0.5, airBase: 150 },
-  northAmerica: { fcl20: 1000, fcl40: 1300, lclPerRt: 75, lclBase: 160, airPerKg: 0.6, airBase: 160 },
-  latinAmerica: { fcl20: 900, fcl40: 1200, lclPerRt: 65, lclBase: 150, airPerKg: 0.5, airBase: 150 },
-  africa: { fcl20: 900, fcl40: 1200, lclPerRt: 65, lclBase: 150, airPerKg: 0.5, airBase: 150 },
-  oceania: { fcl20: 900, fcl40: 1200, lclPerRt: 70, lclBase: 160, airPerKg: 0.55, airBase: 160 },
+  eastAsia: { fcl20: 70_000, fcl40: 95_000, lclBase: 18_000, lclPerRt: 7_000, airBase: 15_000, airPerKg: 50 },
+  southeastAsia: { fcl20: 75_000, fcl40: 100_000, lclBase: 18_000, lclPerRt: 7_500, airBase: 15_000, airPerKg: 50 },
+  southAsia: { fcl20: 85_000, fcl40: 115_000, lclBase: 20_000, lclPerRt: 8_000, airBase: 18_000, airPerKg: 55 },
+  middleEast: { fcl20: 100_000, fcl40: 135_000, lclBase: 22_000, lclPerRt: 9_000, airBase: 20_000, airPerKg: 60 },
+  europe: { fcl20: 170_000, fcl40: 220_000, lclBase: 30_000, lclPerRt: 12_000, airBase: 28_000, airPerKg: 90 },
+  russiaCis: { fcl20: 160_000, fcl40: 210_000, lclBase: 28_000, lclPerRt: 11_000, airBase: 26_000, airPerKg: 80 },
+  northAmerica: { fcl20: 180_000, fcl40: 230_000, lclBase: 30_000, lclPerRt: 13_000, airBase: 28_000, airPerKg: 95 },
+  latinAmerica: { fcl20: 165_000, fcl40: 215_000, lclBase: 28_000, lclPerRt: 11_000, airBase: 26_000, airPerKg: 80 },
+  africa: { fcl20: 165_000, fcl40: 215_000, lclBase: 28_000, lclPerRt: 11_000, airBase: 26_000, airPerKg: 80 },
+  oceania: { fcl20: 165_000, fcl40: 215_000, lclBase: 30_000, lclPerRt: 12_000, airBase: 28_000, airPerKg: 90 },
 }
 
-/** Preset destination (DAP) charges in USD for the lane's region. */
-export function localChargesUsd(region: FreightRegion, basis: FreightBasis): RatedAmount {
+/** Preset destination (DAP) charges in JPY for the lane's region. */
+export function localChargesJpy(region: FreightRegion, basis: FreightBasis): RatedAmount {
   const r = LOCAL_CHARGES[region]
   switch (basis.mode) {
     case 'fcl': {
@@ -293,7 +417,7 @@ export function localChargesUsd(region: FreightRegion, basis: FreightBasis): Rat
         unit: 'rt',
         base: r.lclBase,
         minimum: false,
-        amount: r.lclBase + r.lclPerRt * basis.revenueTons,
+        amount: Math.round(r.lclBase + r.lclPerRt * basis.revenueTons),
       }
     case 'air':
       return {
@@ -302,7 +426,7 @@ export function localChargesUsd(region: FreightRegion, basis: FreightBasis): Rat
         unit: 'kg',
         base: r.airBase,
         minimum: false,
-        amount: r.airBase + r.airPerKg * basis.chargeableKg,
+        amount: Math.round(r.airBase + r.airPerKg * basis.chargeableKg),
       }
   }
 }
@@ -322,36 +446,48 @@ export function domesticTruckJpy(truck: ContainerId, units: number): number {
 export const EXPORT_CHARGE_RATES = {
   /** 輸出通関料 (per declaration). */
   customs: 11800,
-  /** B/L 作成料 (sea) / AWB 作成料 (air), per shipment. */
-  billOfLading: 6000,
-  airwayBill: 5000,
+  /** B/L 作成料・書類費 (sea) / AWB 作成料 (air), per shipment. */
+  billOfLading: 6500,
+  airwayBill: 5500,
+  /** Advance cargo filing (US AMS, Canada ACI, EU ENS / UK S&S) per B/L. */
+  advanceFiling: 5000,
   /** Per container: terminal handling, vanning at the port warehouse, seal. */
   fcl: {
-    '20': { thc: 45000, vanning: 35000, seal: 1800 },
-    '40': { thc: 64000, vanning: 52000, seal: 1800 },
+    '20': { thc: 47000, vanning: 38000, seal: 2000 },
+    '40': { thc: 67000, vanning: 56000, seal: 2000 },
   },
-  /** LCL: CFS charge incl. THC per revenue ton (at least 1 R/T). */
-  lclPerRt: 6000,
+  /** LCL per revenue ton (at least 1 R/T): CFS charge and THC. */
+  lcl: { cfs: 5000, thc: 1500 },
   /** Air: terminal handling incl. X-ray screening per chargeable kg, with a minimum. */
-  airPerKg: 35,
-  airMin: 6000,
+  airPerKg: 40,
+  airMin: 7000,
 } as const
 
-export type ExportChargeKey = 'thc' | 'vanning' | 'seal' | 'cfs' | 'airHandling' | 'customs' | 'document'
+/** Origin CFS + THC per revenue ton of LCL (part of the LCL all-in rate per R/T). */
+export const LCL_ORIGIN_PER_RT = EXPORT_CHARGE_RATES.lcl.cfs + EXPORT_CHARGE_RATES.lcl.thc
 
-export interface ExportChargeLine {
-  key: ExportChargeKey
+/** Regions whose customs require an advance cargo filing by the shipper's forwarder (sea). */
+const ADVANCE_FILING_REGIONS: ReadonlySet<FreightRegion> = new Set(['northAmerica', 'europe'])
+
+export type PortChargeKey = 'thc' | 'vanning' | 'seal' | 'cfs' | 'lclThc' | 'airHandling' | 'document' | 'filing'
+
+export interface PortChargeLine {
+  key: PortChargeKey
   /** Unit price (JPY) and quantity (containers / R/T / kg; 1 for per-shipment items). */
   rate: number
   quantity: number
   amount: number
 }
 
-/** Export clearance & port charges (THC / B/L / vanning …) for one shipment, JPY. */
-export function exportChargesJpy(basis: FreightBasis): { lines: ExportChargeLine[]; total: number } {
+/**
+ * Export port / airport charges for one shipment (JPY): FCL per container (THC, vanning, seal),
+ * LCL per revenue ton (CFS, THC), air per kg (terminal handling), plus the B/L / AWB and, to North
+ * America and Europe, the advance cargo filing. Customs clearance is a separate item.
+ */
+export function exportPortChargesJpy(basis: FreightBasis, region: FreightRegion): { lines: PortChargeLine[]; total: number } {
   const r = EXPORT_CHARGE_RATES
-  const lines: ExportChargeLine[] = []
-  const add = (key: ExportChargeKey, rate: number, quantity: number, amount = rate * quantity) =>
+  const lines: PortChargeLine[] = []
+  const add = (key: PortChargeKey, rate: number, quantity: number, amount = rate * quantity) =>
     lines.push({ key, rate, quantity, amount: Math.round(amount) })
   if (basis.mode === 'fcl') {
     const c = r.fcl[containerSize(basis.container)]
@@ -359,11 +495,17 @@ export function exportChargesJpy(basis: FreightBasis): { lines: ExportChargeLine
     add('vanning', c.vanning, basis.units)
     add('seal', c.seal, basis.units)
   } else if (basis.mode === 'lcl') {
-    add('cfs', r.lclPerRt, basis.revenueTons)
+    add('cfs', r.lcl.cfs, basis.revenueTons)
+    add('lclThc', r.lcl.thc, basis.revenueTons)
   } else {
     add('airHandling', r.airPerKg, basis.chargeableKg, Math.max(r.airMin, r.airPerKg * basis.chargeableKg))
   }
-  add('customs', r.customs, 1)
   add('document', basis.mode === 'air' ? r.airwayBill : r.billOfLading, 1)
+  if (basis.mode !== 'air' && ADVANCE_FILING_REGIONS.has(region)) add('filing', r.advanceFiling, 1)
   return { lines, total: lines.reduce((sum, line) => sum + line.amount, 0) }
+}
+
+/** Export customs clearance for one declaration (JPY). */
+export function exportCustomsJpy(): number {
+  return EXPORT_CHARGE_RATES.customs
 }
